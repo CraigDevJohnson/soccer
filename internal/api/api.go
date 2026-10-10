@@ -131,6 +131,9 @@ type choice struct {
 	TeamIDs  []string `json:"team_ids"`
 	Excluded []string `json:"excluded"`
 	Included []string `json:"included"`
+	// Since is the as_of of the schedule the person ticked from; games
+	// starting at or after it are the default. Defaults to now.
+	Since *time.Time `json:"since"`
 }
 
 func (h *Handler) readChoice(w http.ResponseWriter, r *http.Request) (schedule.Selection, bool) {
@@ -145,7 +148,7 @@ func (h *Handler) readChoice(w http.ResponseWriter, r *http.Request) (schedule.S
 		TeamIDs:  c.TeamIDs,
 		Excluded: c.Excluded,
 		Included: c.Included,
-		Since:    h.now().Truncate(time.Second),
+		Since:    since(c.Since, h.now()),
 	}, true
 }
 
@@ -351,4 +354,13 @@ func (h *Handler) recoverer(next http.Handler) http.Handler {
 		}()
 		next.ServeHTTP(w, r)
 	})
+}
+
+// since uses the screen's as_of when given, never later than now, so time
+// spent on the page cannot drop a game that was ticked by default.
+func since(asOf *time.Time, now time.Time) time.Time {
+	if asOf == nil || asOf.IsZero() || asOf.After(now) {
+		return now.Truncate(time.Second)
+	}
+	return asOf.Truncate(time.Second)
 }

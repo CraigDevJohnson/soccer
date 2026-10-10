@@ -70,6 +70,9 @@ type Schedule struct {
 	Teams  []Team    `json:"teams"`
 	Games  []Game    `json:"games"`
 	Failed []Failure `json:"failed"`
+	// AsOf is the moment Remaining was judged from. A screen sends it back
+	// as "since" so its ticks mean the same thing however long it was open.
+	AsOf time.Time `json:"as_of"`
 }
 
 // TeamIDs returns the Team IDs that were read.
@@ -132,7 +135,7 @@ func Combine(ctx context.Context, src league.Teams, teamIDs []string, now time.T
 		return Schedule{}, err
 	}
 
-	s := Schedule{Teams: []Team{}, Games: []Game{}, Failed: []Failure{}}
+	s := Schedule{Teams: []Team{}, Games: []Game{}, Failed: []Failure{}, AsOf: now.Truncate(time.Second)}
 	byKey := map[string]int{}
 	unavailable := false
 	for i, t := range teams {
@@ -188,7 +191,9 @@ func Combine(ctx context.Context, src league.Teams, teamIDs []string, now time.T
 }
 
 // gameKey identifies a game across Teams: the league's game ID, or, when the
-// league leaves it out, the slot it is played in.
+// league leaves it out, the slot it is played in. soccer_scraper always had a
+// game ID; the slot is a last resort, and a game without one that moves is
+// treated as a new game.
 func gameKey(g league.Game) string {
 	if g.ID != "" {
 		return g.ID

@@ -23,8 +23,10 @@ Boise only. A person finds a Team by Team ID, by name search, or by browsing the
 `POST /calendar` and `POST /links` take the Teams and only what the person changed from the default:
 
 ```json
-{"team_ids": ["123456", "654321"], "excluded": ["<game id unticked>"], "included": ["<played game id ticked>"]}
+{"team_ids": ["123456", "654321"], "excluded": ["<game id unticked>"], "included": ["<played game id ticked>"], "since": "<as_of from the schedule>"}
 ```
+
+`since` is the `as_of` of the schedule the person ticked from, so a game that starts while the page is open stays ticked; without it the default is judged from the moment of the request.
 
 A Session link's token carries that choice and the moment it was made, so nothing about a Visitor is stored. Games starting after that moment are in unless excluded, so games the league posts later join the link by themselves.
 

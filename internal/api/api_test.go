@@ -370,3 +370,32 @@ func TestPanicIsJSON(t *testing.T) {
 		t.Fatalf("%d %q", rec.Code, rec.Body)
 	}
 }
+
+func TestChoiceKeepsTheScreensCutoff(t *testing.T) {
+	h, _ := newServer(t, fakeTeams{}, fakeDirectory{})
+	asOf := decode[struct {
+		AsOf string `json:"as_of"`
+	}](t, do(t, h, "GET", "/schedule?team=111111", "")).AsOf
+	if asOf == "" {
+		t.Fatal("schedule has no as_of")
+	}
+
+	// g3 starts Oct 14 19:00; the person submits after it has started.
+	later := at(14, 20)
+	h2 := &Handler{Teams: fakeTeams{}, Directory: fakeDirectory{}, Log: slog.New(slog.NewJSONHandler(io.Discard, nil)), Now: func() time.Time { return later }}
+	r := h2.Router()
+	rec := do(t, r, "POST", "/calendar", `{"team_ids":["111111"],"since":"`+asOf+`"}`)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "UID:game-g3@") {
+		t.Fatalf("game ticked on screen was dropped: %d\n%s", rec.Code, rec.Body)
+	}
+	// Without since, the default is judged from now and g3 is out.
+	rec = do(t, r, "POST", "/calendar", `{"team_ids":["111111"]}`)
+	if strings.Contains(rec.Body.String(), "UID:game-g3@") {
+		t.Fatalf("g3 kept without since:\n%s", rec.Body)
+	}
+	// A since in the future is clamped to now.
+	rec = do(t, r, "POST", "/calendar", `{"team_ids":["111111"],"since":"2030-01-01T00:00:00Z"}`)
+	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "UID:game-g3@") {
+		t.Fatalf("future since: %d\n%s", rec.Code, rec.Body)
+	}
+}
