@@ -36,7 +36,7 @@ func serve(t *testing.T, status int, body string) (*Client, *int) {
 	calls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		if r.URL.Path != "/teams/123456" {
+		if r.URL.Path != "/teams/123456" && r.URL.Path != "/games" {
 			t.Errorf("path = %q", r.URL.Path)
 		}
 		w.WriteHeader(status)
@@ -150,19 +150,6 @@ func TestParseLeagueTime(t *testing.T) {
 	}
 }
 
-func TestUnconnected(t *testing.T) {
-	var d Directory = Unconnected{}
-	if _, err := d.SearchTeams(context.Background(), "rovers"); !errors.Is(err, ErrNotConnected) {
-		t.Fatal(err)
-	}
-	if _, err := d.Divisions(context.Background()); !errors.Is(err, ErrNotConnected) {
-		t.Fatal(err)
-	}
-	if _, err := d.DivisionTeams(context.Background(), "1"); !errors.Is(err, ErrNotConnected) {
-		t.Fatal(err)
-	}
-}
-
 func TestTeamCanceledIsNotAnOutage(t *testing.T) {
 	c, _ := serve(t, http.StatusOK, sampleTeam)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -196,5 +183,75 @@ func TestTeamAcceptsNumbersOrStrings(t *testing.T) {
 	}
 	if team.Season != "2026 Fall" || len(team.Games) != 2 || team.Games[0].ID != "42" || team.Games[0].Field != "3" || team.Games[1].ID != "" || team.Games[1].Field != "2" {
 		t.Fatalf("%+v", team)
+	}
+}
+
+// sampleDay is the league's day schedule (2026-10-10), trimmed: a map of
+// field number to slots, each a game or free time.
+const sampleDay = `{
+  "1": [
+    {"game": {"UGameID": 3092837, "field_name": "Field 1", "SchedGameDateTime": "2026-10-11T08:20:00.000Z", "Field": 1, "FacilityID": 4,
+              "home_team": {"UTeamID": 489605, "team_name": "HUFF N PUFF", "division_name": "Coed 8 Sun", "div_code": "C8Sun", "Dropped": false, "UDivSeasonID": 114434, "Season": 173},
+              "visitor_team": {"UTeamID": 490345, "team_name": "NO BALLZ ALL BALLERZ", "division_name": "Coed 8 Sun", "div_code": "C8Sun", "Dropped": false, "UDivSeasonID": 114434, "Season": 173}},
+     "time_to_order": "2026-10-11T08:20:00.000Z", "division": "C8Sun", "field": 1, "duration": 45, "end": "2026-10-11T09:05:00.000Z"},
+    {"blank_space": null, "start": "2026-10-11T20:20:00.000Z", "end": "2026-10-11T23:59:00.000Z", "field": 1, "duration": 219.0}
+  ],
+  "2": [
+    {"game": {"UGameID": 3092840, "field_name": "Field 2", "SchedGameDateTime": "2026-10-11T08:20:00.000Z", "Field": 2,
+              "home_team": {"UTeamID": 490100, "team_name": "SQUAD", "division_name": "Coed 5 Sun", "div_code": "C5Sun", "UDivSeasonID": 114515, "Season": 173},
+              "visitor_team": {"UTeamID": 490101, "team_name": "ITS TOO EZ", "division_name": "Coed 5 Sun", "div_code": "C5Sun", "UDivSeasonID": 114515, "Season": 173}},
+     "duration": 45}
+  ]
+}`
+
+func TestDayGames(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		_, _ = w.Write([]byte(sampleDay))
+	}))
+	t.Cleanup(srv.Close)
+	c := NewClient(srv.URL)
+	// 2026-10-11 00:30 in Denver is still 2026-10-11 there, though 06:30Z.
+	games, err := c.DayGames(context.Background(), time.Date(2026, 10, 11, 0, 30, 0, 0, Mountain).UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotQuery != "date=2026-10-11&facility_id=4" {
+		t.Fatalf("query = %q", gotQuery)
+	}
+	if len(games) != 2 {
+		t.Fatalf("got %d games: %+v", len(games), games)
+	}
+	g := games[0]
+	if g.ID != "3092837" || g.Field != "1" || !g.Start.Equal(time.Date(2026, 10, 11, 8, 20, 0, 0, Mountain)) {
+		t.Fatalf("game 0 = %+v", g)
+	}
+	if g.Home.ID != "489605" || g.Home.Name != "HUFF N PUFF" || g.Home.Division != (Division{ID: "114434", Name: "Coed 8 Sun", Code: "C8Sun"}) {
+		t.Fatalf("home = %+v", g.Home)
+	}
+	if g.Away.ID != "490345" || games[1].Field != "2" || games[1].Away.Name != "ITS TOO EZ" {
+		t.Fatalf("games = %+v", games)
+	}
+}
+
+func TestDayGamesErrors(t *testing.T) {
+	for name, tc := range map[string]struct {
+		status int
+		body   string
+	}{
+		"facility unknown": {http.StatusNotFound, `{"message":"the facility doesn't exists"}`},
+		"maintenance":      {http.StatusOK, `<html>`},
+		"unreadable time":  {http.StatusOK, `{"1":[{"game":{"UGameID":1,"SchedGameDateTime":"soon","home_team":{"UTeamID":1,"team_name":"A"},"visitor_team":{"UTeamID":2,"team_name":"B"}}}]}`},
+	} {
+		c, _ := serve(t, tc.status, tc.body)
+		if _, err := c.DayGames(context.Background(), time.Now()); !errors.Is(err, ErrUnavailable) {
+			t.Errorf("%s: err = %v, want ErrUnavailable", name, err)
+		}
+	}
+	c, _ := serve(t, http.StatusOK, `{"1":[{"blank_space":null,"field":1}],"2":[]}`)
+	games, err := c.DayGames(context.Background(), time.Now())
+	if err != nil || len(games) != 0 {
+		t.Fatalf("free day: %v %v", games, err)
 	}
 }

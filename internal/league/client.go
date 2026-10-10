@@ -7,27 +7,35 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"sort"
 	"strings"
 	"time"
 )
 
-// DefaultBaseURL is the league's Team address, as soccer_scraper used it.
-const DefaultBaseURL = "https://lps-api-prod.lps-test.com"
+const (
+	// DefaultBaseURL is the league's schedule service, as soccer_scraper used it.
+	DefaultBaseURL = "https://lps-api-prod.lps-test.com"
+	// DefaultFacilityID is Boise in the league's GET /facilities list.
+	DefaultFacilityID = "4"
+)
 
-// Client reads Teams from the league's schedule service.
+// Client reads Teams and day schedules from the league's schedule service.
 type Client struct {
-	BaseURL string
-	HTTP    *http.Client
+	BaseURL    string
+	FacilityID string
+	HTTP       *http.Client
 }
 
-// NewClient returns a Client with a 10-second timeout per request.
+// NewClient returns a Client for Boise with a 10-second timeout per request.
 func NewClient(baseURL string) *Client {
 	if baseURL == "" {
 		baseURL = DefaultBaseURL
 	}
 	return &Client{
-		BaseURL: strings.TrimRight(baseURL, "/"),
-		HTTP:    &http.Client{Timeout: 10 * time.Second},
+		BaseURL:    strings.TrimRight(baseURL, "/"),
+		FacilityID: DefaultFacilityID,
+		HTTP:       &http.Client{Timeout: 10 * time.Second},
 	}
 }
 
@@ -91,18 +99,9 @@ func (c *Client) Team(ctx context.Context, teamID string) (Team, error) {
 	if err != nil {
 		return Team{}, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/teams/"+id, nil)
+	resp, err := c.get(ctx, "/teams/"+id)
 	if err != nil {
 		return Team{}, err
-	}
-	req.Header.Set("Accept", "application/json")
-	resp, err := c.HTTP.Do(req)
-	if err != nil {
-		// A caller that went away is not a league outage.
-		if errors.Is(ctx.Err(), context.Canceled) {
-			return Team{}, ctx.Err()
-		}
-		return Team{}, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
 	defer resp.Body.Close()
 	switch {
@@ -172,6 +171,104 @@ func (c *Client) Team(ctx context.Context, teamID string) (Team, error) {
 		})
 	}
 	return team, nil
+}
+
+// get makes one league request. A caller that went away is not a league
+// outage; anything else that stops the request is.
+func (c *Client) get(ctx context.Context, path string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return nil, ctx.Err()
+		}
+		return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
+	}
+	return resp, nil
+}
+
+// dayTeam is a Team as the day schedule names it on each game.
+type dayTeam struct {
+	UTeamID      flexString `json:"UTeamID"`
+	TeamName     string     `json:"team_name"`
+	DivisionName string     `json:"division_name"`
+	DivCode      string     `json:"div_code"`
+	UDivSeasonID flexString `json:"UDivSeasonID"`
+}
+
+func (t dayTeam) summary() TeamSummary {
+	return TeamSummary{
+		ID:       string(t.UTeamID),
+		Name:     t.TeamName,
+		Division: Division{ID: string(t.UDivSeasonID), Name: t.DivisionName, Code: t.DivCode},
+	}
+}
+
+// daySlot is one entry of the league's day schedule, GET
+// /games?facility_id={id}&date={date}: a map of field number to slots, each
+// slot a game or free time.
+type daySlot struct {
+	Game *struct {
+		UGameID           flexString `json:"UGameID"`
+		SchedGameDateTime string     `json:"SchedGameDateTime"`
+		FieldName         string     `json:"field_name"`
+		Field             flexString `json:"Field"`
+		HomeTeam          dayTeam    `json:"home_team"`
+		VisitorTeam       dayTeam    `json:"visitor_team"`
+	} `json:"game"`
+}
+
+// DayGames lists every game at the Facility on date (a Mountain-time day).
+// A day with no games is an empty list; the league answering anything this
+// code cannot read is ErrUnavailable.
+func (c *Client) DayGames(ctx context.Context, date time.Time) ([]DayGame, error) {
+	day := date.In(Mountain).Format("2006-01-02")
+	q := url.Values{"facility_id": {c.FacilityID}, "date": {day}}
+	resp, err := c.get(ctx, "/games?"+q.Encode())
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("%w: day %s: status %d", ErrUnavailable, day, resp.StatusCode)
+	}
+	var fields map[string][]daySlot
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&fields); err != nil {
+		return nil, fmt.Errorf("%w: decoding day %s: %v", ErrUnavailable, day, err)
+	}
+	games := []DayGame{}
+	for _, slots := range fields {
+		for _, s := range slots {
+			g := s.Game
+			if g == nil {
+				continue
+			}
+			home, away := g.HomeTeam.summary(), g.VisitorTeam.summary()
+			if g.SchedGameDateTime == "" || home.ID == "" || home.Name == "" || away.ID == "" || away.Name == "" {
+				continue
+			}
+			start, err := ParseLeagueTime(g.SchedGameDateTime)
+			if err != nil {
+				return nil, fmt.Errorf("%w: day %s game %q: %v", ErrUnavailable, day, string(g.UGameID), err)
+			}
+			field := strings.TrimPrefix(g.FieldName, "Field ")
+			if field == "" {
+				field = string(g.Field)
+			}
+			games = append(games, DayGame{ID: string(g.UGameID), Start: start, Field: field, Home: home, Away: away})
+		}
+	}
+	sort.Slice(games, func(i, j int) bool {
+		if !games[i].Start.Equal(games[j].Start) {
+			return games[i].Start.Before(games[j].Start)
+		}
+		return games[i].Field < games[j].Field
+	})
+	return games, nil
 }
 
 // ParseLeagueTime reads a league timestamp as Mountain wall-clock time. The

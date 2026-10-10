@@ -20,9 +20,6 @@ var (
 	// ErrUnavailable means the league's service did not answer usefully.
 	// Visitors get a plain message and a link to the league; nothing retries.
 	ErrUnavailable = errors.New("league schedule service unavailable")
-	// ErrNotConnected means a lookup this package cannot make yet because
-	// the league address behind it is not known.
-	ErrNotConnected = errors.New("not connected to the league yet")
 )
 
 // Mountain is the Facility's time zone. The league sends local Boise times
@@ -59,9 +56,9 @@ type Game struct {
 
 // TeamSummary is a Team as a search or a division lists it, without games.
 type TeamSummary struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Division string `json:"division,omitempty"`
+	ID       string   `json:"id"`
+	Name     string   `json:"name"`
+	Division Division `json:"division"`
 }
 
 // Division is what Let's Play Soccer calls a league at the Facility, for
@@ -78,27 +75,27 @@ type Teams interface {
 	Team(ctx context.Context, teamID string) (Team, error)
 }
 
-// Directory finds Teams without a Team ID: by name, or by division.
+// Directory finds Teams without a Team ID: by name, or by division. An
+// unknown division lists no Teams rather than failing.
 type Directory interface {
 	SearchTeams(ctx context.Context, query string) ([]TeamSummary, error)
 	Divisions(ctx context.Context) ([]Division, error)
 	DivisionTeams(ctx context.Context, divisionID string) ([]TeamSummary, error)
 }
 
-// Unconnected is the Directory until the league's search and division
-// addresses are known; every call answers ErrNotConnected.
-type Unconnected struct{}
-
-func (Unconnected) SearchTeams(context.Context, string) ([]TeamSummary, error) {
-	return nil, ErrNotConnected
+// DayGame is one game from the Facility's day schedule: who plays whom, and
+// in which division. Start is in Mountain time.
+type DayGame struct {
+	ID    string
+	Start time.Time
+	Field string
+	Home  TeamSummary
+	Away  TeamSummary
 }
 
-func (Unconnected) Divisions(context.Context) ([]Division, error) {
-	return nil, ErrNotConnected
-}
-
-func (Unconnected) DivisionTeams(context.Context, string) ([]TeamSummary, error) {
-	return nil, ErrNotConnected
+// Days lists the games at the Facility on one date.
+type Days interface {
+	DayGames(ctx context.Context, date time.Time) ([]DayGame, error)
 }
 
 var teamIDPattern = regexp.MustCompile(`^[0-9]{6}$`)

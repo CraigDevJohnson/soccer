@@ -296,8 +296,6 @@ func (h *Handler) leagueError(w http.ResponseWriter, err error) {
 	case errors.Is(err, context.Canceled):
 		// The caller went away; not an outage, so no alert line.
 		writeError(w, http.StatusServiceUnavailable, "canceled", "request canceled")
-	case errors.Is(err, league.ErrNotConnected):
-		writeError(w, http.StatusNotImplemented, "not_connected", "this lookup is not connected to the league yet")
 	case errors.Is(err, league.ErrTeamNotFound):
 		writeError(w, http.StatusNotFound, "team_not_found", "no team has that team ID")
 	case errors.Is(err, league.ErrUnavailable):

@@ -52,7 +52,7 @@ type fakeDirectory struct{}
 
 func (fakeDirectory) SearchTeams(_ context.Context, q string) ([]league.TeamSummary, error) {
 	if strings.EqualFold(q, "rov") {
-		return []league.TeamSummary{{ID: "111111", Name: "ROVERS", Division: "Coed Open"}}, nil
+		return []league.TeamSummary{{ID: "111111", Name: "ROVERS", Division: league.Division{ID: "d1", Name: "Coed Open"}}}, nil
 	}
 	return nil, nil
 }
@@ -62,7 +62,7 @@ func (fakeDirectory) Divisions(context.Context) ([]league.Division, error) {
 }
 
 func (fakeDirectory) DivisionTeams(_ context.Context, id string) ([]league.TeamSummary, error) {
-	return []league.TeamSummary{{ID: "111111", Name: "ROVERS", Division: id}}, nil
+	return []league.TeamSummary{{ID: "111111", Name: "ROVERS", Division: league.Division{ID: id, Name: "Coed Open"}}}, nil
 }
 
 func newServer(t *testing.T, teams league.Teams, dir league.Directory) (http.Handler, *bytes.Buffer) {
@@ -177,15 +177,6 @@ func TestSearchAndBrowse(t *testing.T) {
 	}
 	if rec := do(t, h, "GET", "/divisions/d1/teams", ""); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "111111") {
 		t.Fatalf("division teams: %d %s", rec.Code, rec.Body)
-	}
-}
-
-func TestSearchNotConnectedYet(t *testing.T) {
-	h, _ := newServer(t, fakeTeams{}, league.Unconnected{})
-	for _, path := range []string{"/teams?q=rovers", "/divisions", "/divisions/d1/teams"} {
-		if rec := do(t, h, "GET", path, ""); rec.Code != http.StatusNotImplemented || !strings.Contains(rec.Body.String(), "not_connected") {
-			t.Errorf("%s: %d %s", path, rec.Code, rec.Body)
-		}
 	}
 }
 

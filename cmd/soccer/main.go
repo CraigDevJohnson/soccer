@@ -19,9 +19,13 @@ import (
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 
+	client := league.NewClient(os.Getenv("LEAGUE_BASE_URL"))
+	if id := os.Getenv("LEAGUE_FACILITY_ID"); id != "" {
+		client.FacilityID = id
+	}
 	h := &api.Handler{
-		Teams:       league.NewClient(os.Getenv("LEAGUE_BASE_URL")),
-		Directory:   league.Unconnected{},
+		Teams:       client,
+		Directory:   league.NewScanDirectory(client, log),
 		LinkBaseURL: os.Getenv("LINK_BASE_URL"),
 		Log:         log,
 	}
