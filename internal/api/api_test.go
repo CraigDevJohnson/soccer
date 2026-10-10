@@ -210,7 +210,7 @@ func TestDownload(t *testing.T) {
 		t.Fatalf("output not logged: %s", logs)
 	}
 
-	for _, bad := range []string{`not json`, `{"team_ids":[]}`, `{"team_ids":["111111"],"extra":1}`} {
+	for _, bad := range []string{`not json`, `{"team_ids":[]}`, `{"team_ids":["111111"],"extra":1}`, `{"team_ids":["111111"]} {"team_ids":["222222"]}`} {
 		if rec := do(t, h, "POST", "/calendar", bad); rec.Code != http.StatusBadRequest {
 			t.Errorf("%s: %d", bad, rec.Code)
 		}
@@ -311,6 +311,10 @@ func TestPartialOutageNeverDropsATeam(t *testing.T) {
 	created := decode[struct{ Token string }](t, do(t, h, "POST", "/links", `{"team_ids":["111111","222222"]}`))
 
 	flaky, _ := newServer(t, fakeTeams{downOnly: "222222"}, fakeDirectory{})
+	// A download without KICKERS would look complete.
+	if rec := do(t, flaky, "POST", "/calendar", `{"team_ids":["111111","222222"]}`); rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("download: %d %s", rec.Code, rec.Body)
+	}
 	// Creating a link would lose KICKERS for good.
 	if rec := do(t, flaky, "POST", "/links", `{"team_ids":["111111","222222"]}`); rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body)
@@ -352,5 +356,17 @@ func TestCanceledRequestIsNotAnOutage(t *testing.T) {
 	h.ServeHTTP(httptest.NewRecorder(), req)
 	if strings.Contains(logs.String(), "league_unavailable") {
 		t.Fatalf("cancellation raised an outage alert: %s", logs)
+	}
+}
+
+type panickyDirectory struct{ fakeDirectory }
+
+func (panickyDirectory) Divisions(context.Context) ([]league.Division, error) { panic("boom") }
+
+func TestPanicIsJSON(t *testing.T) {
+	h, _ := newServer(t, fakeTeams{}, panickyDirectory{})
+	rec := do(t, h, "GET", "/divisions", "")
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), `"code":"internal"`) {
+		t.Fatalf("%d %q", rec.Code, rec.Body)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -37,7 +38,7 @@ type Handler struct {
 func (h *Handler) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Use(requestLogger(h.Log))
-	r.Use(middleware.Recoverer)
+	r.Use(h.recoverer)
 	r.Use(middleware.Timeout(8 * time.Second))
 
 	r.NotFound(func(w http.ResponseWriter, _ *http.Request) {
@@ -136,7 +137,7 @@ func (h *Handler) readChoice(w http.ResponseWriter, r *http.Request) (schedule.S
 	var c choice
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(&c); err != nil {
+	if err := dec.Decode(&c); err != nil || dec.Decode(&struct{}{}) != io.EOF {
 		writeError(w, http.StatusBadRequest, "bad_request", "body must be JSON with team_ids, excluded and included")
 		return schedule.Selection{}, false
 	}
@@ -157,6 +158,11 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request) {
 	s, err := schedule.Combine(r.Context(), h.Teams, sel.TeamIDs, h.now())
 	if err != nil {
 		h.scheduleError(w, err)
+		return
+	}
+	// A file missing one Team's games would look complete to the person.
+	if s.Unavailable() {
+		h.leagueError(w, league.ErrUnavailable)
 		return
 	}
 	body, err := h.render(s, sel)
@@ -329,4 +335,20 @@ func requestLogger(log *slog.Logger) func(http.Handler) http.Handler {
 			)
 		})
 	}
+}
+
+// recoverer turns a panic into the usual JSON 500.
+func (h *Handler) recoverer(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if v := recover(); v != nil {
+				if v == http.ErrAbortHandler {
+					panic(v)
+				}
+				h.Log.Error("panic", "err", v, "route", chi.RouteContext(r.Context()).RoutePattern())
+				writeError(w, http.StatusInternalServerError, "internal", "something went wrong")
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
 }

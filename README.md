@@ -30,7 +30,7 @@ A Session link's token carries that choice and the moment it was made, so nothin
 
 Errors are JSON `{code, message}`: `invalid_team_id` (400), `team_not_found` (404), `invalid_link` (404), `not_found` and `method_not_allowed` for unknown routes, `league_unavailable` (503, also logged as a `league_unavailable` line for an alert), and `not_connected` (501) for the name search and division browsing until the league addresses behind them are wired in.
 
-When the league fails for any one Team, creating or serving a Session link answers 503 rather than leaving that Team out: a link must never lose a Team for good, and a calendar app keeps its last full copy on a 503 but would delete the missing Team's games on a 200.
+When the league fails for any one Team, a download, a new Session link and a Session link fetch all answer 503 rather than leaving that Team out: a file would look complete, a link would lose the Team for good, and a calendar app keeps its last full copy on a 503 but would delete the missing Team's games on a 200.
 
 ## Logs
 
