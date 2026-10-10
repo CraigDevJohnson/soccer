@@ -127,6 +127,11 @@ func (c *Client) Team(ctx context.Context, teamID string) (Team, error) {
 		team.Season = s
 	}
 	for _, g := range body.Games {
+		// A row with no time, no field or no opponent yet is a game the
+		// league has not scheduled; it is left out, as soccer_scraper left it
+		// out. A row that has a time this code cannot read is different: the
+		// league changed shape, and dropping that game would read as "game
+		// cancelled" to every subscribed calendar. That is an outage.
 		if g.SchedGameDateTime == "" || g.HomeTeam.TeamName == "" || g.VisitorTeam.TeamName == "" {
 			continue
 		}
@@ -140,7 +145,7 @@ func (c *Client) Team(ctx context.Context, teamID string) (Team, error) {
 		}
 		start, err := ParseLeagueTime(g.SchedGameDateTime)
 		if err != nil {
-			continue
+			return Team{}, fmt.Errorf("%w: team %s game %q: %v", ErrUnavailable, id, string(g.GameID), err)
 		}
 		team.Games = append(team.Games, Game{
 			ID:    string(g.GameID),

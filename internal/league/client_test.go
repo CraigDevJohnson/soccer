@@ -16,7 +16,7 @@ const sampleTeam = `{
      "home_team": {"team_name": "ROVERS"}, "visitor_team": {"team_name": "KICKERS"}},
     {"game_id": "g2", "SchedGameDateTime": "2026-10-21T20:00:00+00:00", "field_name": "", "Field": 2,
      "home_team": {"team_name": "BANDITS"}, "visitor_team": {"team_name": "ROVERS"}},
-    {"game_id": "bad-time", "SchedGameDateTime": "not a time", "Field": 1,
+    {"game_id": "unscheduled", "SchedGameDateTime": "", "Field": 1,
      "home_team": {"team_name": "A"}, "visitor_team": {"team_name": "B"}},
     {"game_id": "no-field", "SchedGameDateTime": "2026-10-28T20:00:00Z", "Field": 0,
      "home_team": {"team_name": "A"}, "visitor_team": {"team_name": "B"}},
@@ -50,7 +50,7 @@ func TestTeamParsesGamesInMountainTime(t *testing.T) {
 		t.Fatalf("team = %+v", team)
 	}
 	if len(team.Games) != 2 {
-		t.Fatalf("got %d games, want 2 (bad rows skipped): %+v", len(team.Games), team.Games)
+		t.Fatalf("got %d games, want 2 (unscheduled rows skipped): %+v", len(team.Games), team.Games)
 	}
 	g := team.Games[0]
 	want := time.Date(2026, 10, 14, 19, 15, 0, 0, Mountain)
@@ -63,6 +63,19 @@ func TestTeamParsesGamesInMountainTime(t *testing.T) {
 	}
 	if team.Games[1].Field != "2" {
 		t.Fatalf("field fallback to number: %+v", team.Games[1])
+	}
+}
+
+func TestTeamWithAnUnreadableGameTimeIsUnavailable(t *testing.T) {
+	body := `{"team": {"team_name": "ROVERS"}, "games": [
+	  {"game_id": "g1", "SchedGameDateTime": "2026-10-14T19:15:00Z", "Field": 3,
+	   "home_team": {"team_name": "ROVERS"}, "visitor_team": {"team_name": "KICKERS"}},
+	  {"game_id": "g2", "SchedGameDateTime": "10/21/2026 8:00 PM", "Field": 2,
+	   "home_team": {"team_name": "BANDITS"}, "visitor_team": {"team_name": "ROVERS"}}]}`
+	c, _ := serve(t, http.StatusOK, body)
+	_, err := c.Team(context.Background(), "123456")
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("err = %v, want ErrUnavailable: a game the code cannot read must not vanish from calendars", err)
 	}
 }
 
