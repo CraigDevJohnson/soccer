@@ -399,3 +399,10 @@ func TestChoiceKeepsTheScreensCutoff(t *testing.T) {
 		t.Fatalf("future since: %d\n%s", rec.Code, rec.Body)
 	}
 }
+
+func TestLinkRefusesSinceDecodeWouldReject(t *testing.T) {
+	h, _ := newServer(t, fakeTeams{}, fakeDirectory{})
+	if rec := do(t, h, "POST", "/links", `{"team_ids":["111111"],"since":"1970-01-01T00:00:00Z"}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+}

@@ -40,6 +40,9 @@ func Encode(sel schedule.Selection) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if sel.Since.Unix() <= 0 {
+		return "", errors.New("since must be after 1970")
+	}
 	b, err := json.Marshal(payload{V: version, T: ids, X: sel.Excluded, I: sel.Included, S: sel.Since.Unix()})
 	if err != nil {
 		return "", err

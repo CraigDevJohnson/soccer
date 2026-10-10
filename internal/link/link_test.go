@@ -48,6 +48,7 @@ func TestEncodeRefusesBadSelections(t *testing.T) {
 	}
 	for name, sel := range map[string]schedule.Selection{
 		"no teams":     {Since: now},
+		"epoch since":  {TeamIDs: []string{"111111"}, Since: time.Unix(0, 0)},
 		"bad team":     {TeamIDs: []string{"12"}, Since: now},
 		"empty game":   {TeamIDs: []string{"111111"}, Excluded: []string{""}, Since: now},
 		"too many":     {TeamIDs: []string{"111111"}, Excluded: long, Since: now},
