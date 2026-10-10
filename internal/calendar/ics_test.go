@@ -37,6 +37,7 @@ func TestWrite(t *testing.T) {
 		"LOCATION:Let's Play Soccer\\, Boise",
 		"TRIGGER:-PT40M",
 		"DTSTAMP:20261010T000000Z",
+		"REFRESH-INTERVAL;VALUE=DURATION:PT6H",
 	} {
 		if !strings.Contains(unfolded, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
@@ -44,6 +45,13 @@ func TestWrite(t *testing.T) {
 	}
 	if n := strings.Count(out, "BEGIN:VEVENT"); n != 2 {
 		t.Errorf("%d events", n)
+	}
+	if strings.Contains(out, "VALUE=DURATION;VALUE=DURATION") {
+		t.Error("REFRESH-INTERVAL carries its parameter twice")
+	}
+	// Every content line ends in CRLF, and none in a bare LF.
+	if strings.Count(out, "\r\n") != strings.Count(out, "\n") || !strings.HasSuffix(out, "END:VCALENDAR\r\n") {
+		t.Errorf("line endings are not CRLF:\n%q", out[:60])
 	}
 }
 

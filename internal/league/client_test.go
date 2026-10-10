@@ -242,7 +242,8 @@ func TestDayGamesErrors(t *testing.T) {
 	}{
 		"facility unknown": {http.StatusNotFound, `{"message":"the facility doesn't exists"}`},
 		"maintenance":      {http.StatusOK, `<html>`},
-		"unreadable time":  {http.StatusOK, `{"1":[{"game":{"UGameID":1,"SchedGameDateTime":"soon","home_team":{"UTeamID":1,"team_name":"A"},"visitor_team":{"UTeamID":2,"team_name":"B"}}}]}`},
+		"unreadable time":  {http.StatusOK, `{"1":[{"game":{"UGameID":1,"SchedGameDateTime":"soon","home_team":{"UTeamID":1,"team_name":"A","division_name":"D","UDivSeasonID":9},"visitor_team":{"UTeamID":2,"team_name":"B","division_name":"D","UDivSeasonID":9}}}]}`},
+		"no division":      {http.StatusOK, `{"1":[{"game":{"UGameID":1,"SchedGameDateTime":"2026-10-11T08:20:00.000Z","home_team":{"UTeamID":1,"team_name":"A","division_name":"D","UDivSeasonID":9},"visitor_team":{"UTeamID":2,"team_name":"B"}}}]}`},
 	} {
 		c, _ := serve(t, tc.status, tc.body)
 		if _, err := c.DayGames(context.Background(), time.Now()); !errors.Is(err, ErrUnavailable) {

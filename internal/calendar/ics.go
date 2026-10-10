@@ -54,7 +54,7 @@ func Write(c Calendar, stamp time.Time) (string, error) {
 		cal.SetXWRCalName(c.Name)
 	}
 	cal.SetXWRTimezone(TimezoneName)
-	cal.SetRefreshInterval(RefreshInterval, ics.WithValue("DURATION"))
+	cal.SetRefreshInterval(RefreshInterval) // the property already carries VALUE=DURATION
 	cal.SetXPublishedTTL(RefreshInterval)
 	addTimezone(cal)
 
@@ -72,7 +72,8 @@ func Write(c Calendar, stamp time.Time) (string, error) {
 		alarm.SetTrigger(AlarmTrigger)
 		alarm.AddProperty(ics.ComponentPropertyDescription, "Soccer game starting soon")
 	}
-	return cal.Serialize(), nil
+	// iCalendar content lines end in CRLF (RFC 5545 §3.1).
+	return cal.Serialize(ics.WithNewLineWindows), nil
 }
 
 // addTimezone writes America/Denver's rules so calendar apps read each local

@@ -251,6 +251,15 @@ func (c *Client) DayGames(ctx context.Context, date time.Time) ([]DayGame, error
 			if g.SchedGameDateTime == "" || home.ID == "" || home.Name == "" || away.ID == "" || away.Name == "" {
 				continue
 			}
+			// The day schedule is what the division list is built from, so
+			// a game whose Teams carry no division is a changed shape, not a
+			// game to leave out: listing it would hide Teams from their
+			// division for an hour.
+			for _, t := range []TeamSummary{home, away} {
+				if t.Division.ID == "" || t.Division.Name == "" {
+					return nil, fmt.Errorf("%w: day %s game %q: team %s has no division", ErrUnavailable, day, string(g.UGameID), t.ID)
+				}
+			}
 			start, err := ParseLeagueTime(g.SchedGameDateTime)
 			if err != nil {
 				return nil, fmt.Errorf("%w: day %s game %q: %v", ErrUnavailable, day, string(g.UGameID), err)
