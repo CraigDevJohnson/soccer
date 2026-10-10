@@ -74,7 +74,9 @@ func TestTeamErrors(t *testing.T) {
 		want   error
 	}{
 		{"not found", http.StatusNotFound, ``, ErrTeamNotFound},
-		{"bad request", http.StatusBadRequest, ``, ErrTeamNotFound},
+		{"bad request", http.StatusBadRequest, ``, ErrUnavailable},
+		{"gone", http.StatusGone, ``, ErrTeamNotFound},
+		{"no team object", http.StatusOK, `{"message": "maintenance"}`, ErrUnavailable},
 		{"rate limited", http.StatusTooManyRequests, ``, ErrUnavailable},
 		{"refused", http.StatusForbidden, ``, ErrUnavailable},
 		{"empty team", http.StatusOK, `{"team": {"team_name": ""}, "games": []}`, ErrTeamNotFound},
@@ -100,7 +102,7 @@ func TestTeamUnreachable(t *testing.T) {
 
 func TestTeamRejectsBadIDWithoutCalling(t *testing.T) {
 	c, calls := serve(t, http.StatusOK, sampleTeam)
-	for _, id := range []string{"", "12345", "1234567", "abcdef", "012345", "12/456"} {
+	for _, id := range []string{"", "12345", "1234567", "abcdef", "000000", "12/456"} {
 		if _, err := c.Team(context.Background(), id); err == nil {
 			t.Errorf("%q accepted", id)
 		}
@@ -143,5 +145,30 @@ func TestTeamCanceledIsNotAnOutage(t *testing.T) {
 	_, err := c.Team(ctx, "123456")
 	if !errors.Is(err, context.Canceled) || errors.Is(err, ErrUnavailable) {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLeadingZeroTeamID(t *testing.T) {
+	if id, err := ValidTeamID("012345"); err != nil || id != "012345" {
+		t.Fatalf("%q %v", id, err)
+	}
+}
+
+// The league may have changed number/string choices since soccer_scraper.
+func TestTeamAcceptsNumbersOrStrings(t *testing.T) {
+	c, _ := serve(t, http.StatusOK, `{
+	  "team": {"Season": "2026 Fall", "team_name": "ROVERS"},
+	  "games": [
+	    {"game_id": 42, "SchedGameDateTime": "2026-10-14T19:15:00Z", "field_name": "", "Field": "3",
+	     "home_team": {"team_name": "ROVERS"}, "visitor_team": {"team_name": "KICKERS"}},
+	    {"game_id": null, "SchedGameDateTime": "2026-10-21T19:15:00Z", "Field": 2,
+	     "home_team": {"team_name": "ROVERS"}, "visitor_team": {"team_name": "OWLS"}}
+	  ]}`)
+	team, err := c.Team(context.Background(), "123456")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if team.Season != "2026 Fall" || len(team.Games) != 2 || team.Games[0].ID != "42" || team.Games[0].Field != "3" || team.Games[1].ID != "" || team.Games[1].Field != "2" {
+		t.Fatalf("%+v", team)
 	}
 }

@@ -39,7 +39,8 @@ func (h *Handler) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Use(requestLogger(h.Log))
 	r.Use(h.recoverer)
-	r.Use(middleware.Timeout(8 * time.Second))
+	r.Use(deadline(8 * time.Second))
+	r.Use(middleware.GetHead)
 
 	r.NotFound(func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "no such route")
@@ -140,7 +141,16 @@ func (h *Handler) readChoice(w http.ResponseWriter, r *http.Request) (schedule.S
 	var c choice
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(&c); err != nil || dec.Decode(&struct{}{}) != io.EOF {
+	err := dec.Decode(&c)
+	if err == nil && dec.Decode(&struct{}{}) != io.EOF {
+		err = errors.New("trailing data")
+	}
+	var tooBig *http.MaxBytesError
+	switch {
+	case errors.As(err, &tooBig):
+		writeError(w, http.StatusRequestEntityTooLarge, "too_large", "body is too large")
+		return schedule.Selection{}, false
+	case err != nil:
 		writeError(w, http.StatusBadRequest, "bad_request", "body must be JSON with team_ids, excluded and included")
 		return schedule.Selection{}, false
 	}
@@ -158,14 +168,9 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	s, err := schedule.Combine(r.Context(), h.Teams, sel.TeamIDs, h.now())
-	if err != nil {
-		h.scheduleError(w, err)
-		return
-	}
 	// A file missing one Team's games would look complete to the person.
-	if s.Unavailable() {
-		h.leagueError(w, league.ErrUnavailable)
+	s, ok := h.wholeSchedule(w, r, sel.TeamIDs)
+	if !ok {
 		return
 	}
 	body, err := h.render(s, sel)
@@ -186,15 +191,10 @@ func (h *Handler) createLink(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	s, err := schedule.Combine(r.Context(), h.Teams, sel.TeamIDs, h.now())
-	if err != nil {
-		h.scheduleError(w, err)
-		return
-	}
 	// A Team the league failed to answer for would be dropped from the link
 	// for good, so the link waits until the league answers for every Team.
-	if s.Unavailable() {
-		h.leagueError(w, league.ErrUnavailable)
+	s, ok := h.wholeSchedule(w, r, sel.TeamIDs)
+	if !ok {
 		return
 	}
 	sel.TeamIDs = s.TeamIDs()
@@ -218,18 +218,11 @@ func (h *Handler) serveLink(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "invalid_link", "this calendar link is not valid")
 		return
 	}
-	s, err := schedule.Combine(r.Context(), h.Teams, sel.TeamIDs, h.now())
-	switch {
-	case errors.Is(err, schedule.ErrNoTeams):
-		// The Session is over and its Team IDs are gone: an empty calendar
-		// rather than an error, so the app quietly shows nothing.
-	case err != nil:
-		h.scheduleError(w, err)
-		return
-	case s.Unavailable():
-		// A 200 missing one Team's games would make the calendar app drop
-		// them; a 503 makes it keep its last full copy.
-		h.leagueError(w, league.ErrUnavailable)
+	// A 200 missing one Team's games would make the calendar app drop them;
+	// a 503 makes it keep its last full copy. Only when the league says every
+	// Team ID is gone (the Session is over) is an empty calendar right.
+	s, ok := h.wholeSchedule(w, r, sel.TeamIDs)
+	if !ok {
 		return
 	}
 	body, err := h.render(s, sel)
@@ -241,6 +234,26 @@ func (h *Handler) serveLink(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/calendar; charset=utf-8")
 	w.Header().Set("Cache-Control", "private, max-age=900")
 	_, _ = w.Write([]byte(body))
+}
+
+// wholeSchedule reads every Team or answers the error itself: a Schedule
+// comes back only when the league answered for all of them, so no caller
+// hands out a file or a link with one Team's games silently missing. On
+// /links/{token} alone, Team IDs the league no longer knows give an empty
+// Schedule, because the Session is over and the app should show nothing.
+func (h *Handler) wholeSchedule(w http.ResponseWriter, r *http.Request, ids []string) (schedule.Schedule, bool) {
+	s, err := schedule.Combine(r.Context(), h.Teams, ids, h.now())
+	switch {
+	case errors.Is(err, schedule.ErrNoTeams) && chi.RouteContext(r.Context()).RoutePattern() == "/links/{token}":
+		return s, true
+	case err != nil:
+		h.scheduleError(w, err)
+		return s, false
+	case s.Unavailable():
+		h.leagueError(w, league.ErrUnavailable)
+		return s, false
+	}
+	return s, true
 }
 
 func (h *Handler) render(s schedule.Schedule, sel schedule.Selection) (string, error) {
@@ -363,4 +376,17 @@ func since(asOf *time.Time, now time.Time) time.Time {
 		return now.Truncate(time.Second)
 	}
 	return asOf.Truncate(time.Second)
+}
+
+// deadline bounds every request's context. Unlike chi's Timeout middleware
+// it writes nothing itself, so a handler that answers 503 after the league
+// times out is not overwritten with a 504 (API Gateway's own cap is 30s).
+func deadline(d time.Duration) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx, cancel := context.WithTimeout(r.Context(), d)
+			defer cancel()
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
 }

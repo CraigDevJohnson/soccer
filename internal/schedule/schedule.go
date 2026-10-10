@@ -119,13 +119,23 @@ func Combine(ctx context.Context, src league.Teams, teamIDs []string, now time.T
 	if err != nil {
 		return Schedule{}, err
 	}
+	// The same second a screen gets back as as_of, so Remaining and a later
+	// since never disagree about a game starting right now.
+	now = now.Truncate(time.Second)
 
 	teams := make([]league.Team, len(ids))
 	errs := make([]error, len(ids))
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(4)
 	for i, id := range ids {
-		g.Go(func() error {
+		g.Go(func() (err error) {
+			// A panic here would not reach the request's recoverer and
+			// would take the whole process down.
+			defer func() {
+				if v := recover(); v != nil {
+					errs[i] = fmt.Errorf("%w: reading team %s: panic: %v", league.ErrUnavailable, id, v)
+				}
+			}()
 			teams[i], errs[i] = src.Team(gctx, id)
 			return nil
 		})
@@ -135,7 +145,7 @@ func Combine(ctx context.Context, src league.Teams, teamIDs []string, now time.T
 		return Schedule{}, err
 	}
 
-	s := Schedule{Teams: []Team{}, Games: []Game{}, Failed: []Failure{}, AsOf: now.Truncate(time.Second)}
+	s := Schedule{Teams: []Team{}, Games: []Game{}, Failed: []Failure{}, AsOf: now}
 	byKey := map[string]int{}
 	unavailable := false
 	for i, t := range teams {

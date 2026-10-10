@@ -2,7 +2,7 @@
 
 The Schedule Downloader's backend: it puts a Let's Play Soccer Team's games into a calendar. It is unofficial and not affiliated with Let's Play Soccer.
 
-This is one Tool behind [The Lobby](https://github.com/CraigDevJohnson/the-lobby), which owns every screen and sign-in (ADR 0001 there). The site calls this backend with signed requests to its Lambda address, and nothing else can reach it (ADR 0006). It is a Go/Chi server that runs on AWS Lambda through an adapter and as an ordinary server on a developer's computer (ADR 0002). The league client and the .ics writer come from the archived [soccer_scraper](https://github.com/CraigDevJohnson/soccer_scraper); its email change alerts were left behind.
+This is one Tool behind [The Lobby](https://github.com/CraigDevJohnson/the-lobby), which owns every screen and sign-in (ADR 0001 there). The site calls this backend with signed requests to its Lambda address, and nothing else can reach it (ADR 0006). It is a Go/Chi server that runs on AWS Lambda through an adapter and as an ordinary server on a developer's computer (ADR 0002). The league client and the .ics writer come from the archived [soccer_scraper](https://github.com/CraigDevJohnson/soccer_scraper). Left behind on purpose: its email change alerts and DynamoDB, and its "Special Event" title for one Team, since event wording is deferred in the baseline. The league's schedule service is undocumented and the client was written against the shape soccer_scraper last saw (2026-02); it accepts numbers or strings where the league might have changed, and treats any answer it cannot read as the league being unavailable, never as a Team being gone.
 
 ## The Visitor flow
 
@@ -17,7 +17,7 @@ Boise only. A person finds a Team by Team ID, by name search, or by browsing the
 | `GET /divisions/{divisionID}/teams` | Teams in one division |
 | `POST /calendar` | The chosen games as an .ics download |
 | `POST /links` | A Session link for the chosen games: `{token, url, teams, failed}` |
-| `GET /links/{token}` (or `{token}.ics`) | What a calendar app fetches: the chosen games, read afresh from the league |
+| `GET /links/{token}` (or `{token}.ics`) | What a calendar app fetches: the chosen games, read afresh from the league. `HEAD` works too |
 | `GET /healthz` | 204 |
 
 `POST /calendar` and `POST /links` take the Teams and only what the person changed from the default:
@@ -30,7 +30,7 @@ Boise only. A person finds a Team by Team ID, by name search, or by browsing the
 
 A Session link's token carries that choice and the moment it was made, so nothing about a Visitor is stored. Games starting after that moment are in unless excluded, so games the league posts later join the link by themselves.
 
-Errors are JSON `{code, message}`: `invalid_team_id` (400), `team_not_found` (404), `invalid_link` (404), `not_found` and `method_not_allowed` for unknown routes, `league_unavailable` (503, also logged as a `league_unavailable` line for an alert), and `not_connected` (501) for the name search and division browsing until the league addresses behind them are wired in.
+Errors are JSON `{code, message}`: `invalid_team_id` (400), `team_not_found` (404), `invalid_link` (404), `too_large` (413), `not_found` and `method_not_allowed` for unknown routes, `league_unavailable` (503, also logged as a `league_unavailable` line for an alert), and `not_connected` (501) for the name search and division browsing until the league addresses behind them are wired in.
 
 When the league fails for any one Team, a download, a new Session link and a Session link fetch all answer 503 rather than leaving that Team out: a file would look complete, a link would lose the Team for good, and a calendar app keeps its last full copy on a 503 but would delete the missing Team's games on a 200.
 

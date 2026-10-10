@@ -8,12 +8,15 @@ import (
 	"time"
 
 	ics "github.com/arran4/golang-ical"
+
+	"github.com/CraigDevJohnson/soccer/internal/league"
 )
 
 const (
 	// Location is the Facility's address, the same for every Boise game.
 	Location = "Let's Play Soccer, Boise, 11448 W President Dr #8967, Boise, ID 83713, USA"
-	// TimezoneName is the zone every event is written in.
+	// TimezoneName is the zone every event is written in; league.Mountain
+	// is the same zone loaded.
 	TimezoneName = "America/Denver"
 	// AlarmTrigger reminds 40 minutes before a game, as soccer_scraper did.
 	AlarmTrigger = "-PT40M"
@@ -43,10 +46,7 @@ type Calendar struct {
 // event. Each event's UID is built from its game ID alone, so a calendar app
 // that fetches a Session link again updates games instead of duplicating them.
 func Write(c Calendar, stamp time.Time) (string, error) {
-	loc, err := time.LoadLocation(TimezoneName)
-	if err != nil {
-		return "", fmt.Errorf("load %s: %w", TimezoneName, err)
-	}
+	loc := league.Mountain
 	cal := ics.NewCalendarFor("craigdevjohnson.com Schedule Downloader")
 	cal.SetMethod(ics.MethodPublish)
 	cal.SetCalscale("GREGORIAN")

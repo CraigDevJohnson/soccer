@@ -95,10 +95,11 @@ func (Unconnected) DivisionTeams(context.Context, string) ([]TeamSummary, error)
 	return nil, ErrNotConnected
 }
 
-var teamIDPattern = regexp.MustCompile(`^[1-9][0-9]{5}$`)
+var teamIDPattern = regexp.MustCompile(`^[0-9]{6}$`)
 
 // ValidTeamID reports whether s, trimmed, is a six-digit Team ID, and returns
-// it trimmed.
+// it trimmed. Leading zeros are allowed, as soccer_scraper allowed them;
+// all zeros is not.
 func ValidTeamID(s string) (string, error) {
 	id := strings.TrimSpace(s)
 	if id == "" {
@@ -106,6 +107,9 @@ func ValidTeamID(s string) (string, error) {
 	}
 	if !teamIDPattern.MatchString(id) {
 		return "", fmt.Errorf("team ID %q must be exactly 6 digits", id)
+	}
+	if id == "000000" {
+		return "", fmt.Errorf("team ID %q is not a team ID", id)
 	}
 	return id, nil
 }

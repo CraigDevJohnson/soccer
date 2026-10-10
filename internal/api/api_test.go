@@ -406,3 +406,52 @@ func TestLinkRefusesSinceDecodeWouldReject(t *testing.T) {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
 	}
 }
+
+func TestHeadOnLinks(t *testing.T) {
+	h, _ := newServer(t, fakeTeams{}, fakeDirectory{})
+	created := decode[struct{ Token string }](t, do(t, h, "POST", "/links", `{"team_ids":["111111"]}`))
+	rec := do(t, h, "HEAD", "/links/"+created.Token+".ics", "")
+	if rec.Code != http.StatusOK || !strings.HasPrefix(rec.Header().Get("Content-Type"), "text/calendar") {
+		t.Fatalf("%d %q", rec.Code, rec.Header().Get("Content-Type"))
+	}
+}
+
+func TestOversizedBodyIs413(t *testing.T) {
+	h, _ := newServer(t, fakeTeams{}, fakeDirectory{})
+	body := `{"team_ids":["111111"],"excluded":["` + strings.Repeat("g", 70<<10) + `"]}`
+	if rec := do(t, h, "POST", "/calendar", body); rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+}
+
+type slowTeams struct{}
+
+func (slowTeams) Team(ctx context.Context, _ string) (league.Team, error) {
+	<-ctx.Done()
+	return league.Team{}, league.ErrUnavailable
+}
+
+// The request deadline is answered by the handler as a 503, never rewritten.
+func TestDeadlineAnswers503(t *testing.T) {
+	h, _ := newServer(t, slowTeams{}, fakeDirectory{})
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	req := httptest.NewRequest("GET", "/teams/111111", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "league_unavailable") {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+}
+
+type panicInFetch struct{}
+
+func (panicInFetch) Team(context.Context, string) (league.Team, error) { panic("league body shape") }
+
+func TestPanicWhileReadingATeamIs503(t *testing.T) {
+	h, _ := newServer(t, panicInFetch{}, fakeDirectory{})
+	rec := do(t, h, "GET", "/teams/111111", "")
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+}

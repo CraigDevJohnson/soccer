@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -32,17 +31,20 @@ func NewClient(baseURL string) *Client {
 	}
 }
 
-// teamResponse is the league's answer for GET /teams/{id}.
+// teamResponse is the league's answer for GET /teams/{id}, as soccer_scraper
+// last saw it. Numbers and strings are both accepted where the league might
+// have changed its mind since, and a missing "team" object is told apart
+// from an empty one.
 type teamResponse struct {
-	Team struct {
-		Season   int    `json:"Season"`
-		TeamName string `json:"team_name"`
+	Team *struct {
+		Season   flexString `json:"Season"`
+		TeamName string     `json:"team_name"`
 	} `json:"team"`
 	Games []struct {
-		GameID            string `json:"game_id"`
-		SchedGameDateTime string `json:"SchedGameDateTime"`
-		FieldName         string `json:"field_name"`
-		Field             int    `json:"Field"`
+		GameID            flexString `json:"game_id"`
+		SchedGameDateTime string     `json:"SchedGameDateTime"`
+		FieldName         string     `json:"field_name"`
+		Field             flexString `json:"Field"`
 		HomeTeam          struct {
 			TeamName string `json:"team_name"`
 		} `json:"home_team"`
@@ -50,6 +52,30 @@ type teamResponse struct {
 			TeamName string `json:"team_name"`
 		} `json:"visitor_team"`
 	} `json:"games"`
+}
+
+// flexString reads a JSON string, number or null as a string.
+type flexString string
+
+func (f *flexString) UnmarshalJSON(b []byte) error {
+	if string(b) == "null" {
+		*f = ""
+		return nil
+	}
+	if len(b) > 0 && b[0] == '"' {
+		var s string
+		if err := json.Unmarshal(b, &s); err != nil {
+			return err
+		}
+		*f = flexString(s)
+		return nil
+	}
+	var n json.Number
+	if err := json.Unmarshal(b, &n); err != nil {
+		return err
+	}
+	*f = flexString(n.String())
+	return nil
 }
 
 // Team fetches one Team and all of its games, played and remaining.
@@ -73,9 +99,11 @@ func (c *Client) Team(ctx context.Context, teamID string) (Team, error) {
 	}
 	defer resp.Body.Close()
 	switch {
-	// Only answers that say the Team is absent mean a wrong Team ID; rate
-	// limits, refusals and 5xx mean the league itself is in trouble.
-	case resp.StatusCode == http.StatusBadRequest, resp.StatusCode == http.StatusNotFound, resp.StatusCode == http.StatusGone:
+	// Only answers that say the Team is absent mean a wrong Team ID. A 400,
+	// a rate limit, a refusal or a 5xx means the league itself is in trouble
+	// and must not read as "this Team is gone", which would empty every
+	// Session link.
+	case resp.StatusCode == http.StatusNotFound, resp.StatusCode == http.StatusGone:
 		return Team{}, ErrTeamNotFound
 	case resp.StatusCode != http.StatusOK:
 		return Team{}, fmt.Errorf("%w: status %d", ErrUnavailable, resp.StatusCode)
@@ -85,13 +113,18 @@ func (c *Client) Team(ctx context.Context, teamID string) (Team, error) {
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&body); err != nil {
 		return Team{}, fmt.Errorf("%w: decoding team %s: %v", ErrUnavailable, id, err)
 	}
+	if body.Team == nil {
+		// Not the shape soccer_scraper knew: a maintenance page or a changed
+		// API, not an absent Team.
+		return Team{}, fmt.Errorf("%w: team %s: no team object in the answer", ErrUnavailable, id)
+	}
 	if body.Team.TeamName == "" {
 		return Team{}, ErrTeamNotFound
 	}
 
 	team := Team{ID: id, Name: body.Team.TeamName, Games: []Game{}}
-	if body.Team.Season != 0 {
-		team.Season = strconv.Itoa(body.Team.Season)
+	if s := string(body.Team.Season); s != "" && s != "0" {
+		team.Season = s
 	}
 	for _, g := range body.Games {
 		if g.SchedGameDateTime == "" || g.HomeTeam.TeamName == "" || g.VisitorTeam.TeamName == "" {
@@ -99,8 +132,8 @@ func (c *Client) Team(ctx context.Context, teamID string) (Team, error) {
 		}
 		// Prefer the field's name, falling back to its number.
 		field := strings.TrimPrefix(g.FieldName, "Field ")
-		if field == "" && g.Field != 0 {
-			field = strconv.Itoa(g.Field)
+		if field == "" && g.Field != "0" {
+			field = string(g.Field)
 		}
 		if field == "" {
 			continue
@@ -110,7 +143,7 @@ func (c *Client) Team(ctx context.Context, teamID string) (Team, error) {
 			continue
 		}
 		team.Games = append(team.Games, Game{
-			ID:    g.GameID,
+			ID:    string(g.GameID),
 			Start: start,
 			Field: field,
 			Home:  g.HomeTeam.TeamName,
