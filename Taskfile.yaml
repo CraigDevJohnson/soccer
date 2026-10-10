@@ -1,0 +1,54 @@
+version: '3'
+
+tasks:
+  default:
+    cmds:
+      - task --list
+    silent: true
+
+  test:
+    desc: Run the Go tests
+    cmds:
+      - go test ./...
+
+  fmt:
+    desc: Format Go code
+    cmds:
+      - gofmt -l -w cmd internal
+
+  fmt:check:
+    desc: Fail if any Go file is not gofmt-formatted
+    silent: true
+    cmds:
+      - |
+        unformatted=$(gofmt -l cmd internal)
+        if [ -n "$unformatted" ]; then
+          echo "Not gofmt-formatted (run: task fmt):"
+          echo "$unformatted"
+          exit 1
+        fi
+
+  vet:
+    desc: Vet Go code
+    cmds:
+      - go vet ./...
+
+  ci:
+    desc: Everything a pull-request check would run; needs no credentials
+    cmds:
+      - task: fmt:check
+      - task: vet
+      - task: test
+
+  run:
+    desc: Serve on a developer's computer at http://127.0.0.1:8081
+    cmds:
+      - go run ./cmd/soccer
+
+  lambda:
+    desc: Build the Lambda zip, one static arm64 binary named bootstrap (ADR 0002)
+    cmds:
+      - mkdir -p dist/soccer
+      - CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o dist/soccer/bootstrap ./cmd/soccer
+      - cd dist/soccer && rm -f ../soccer.zip && zip -q -X ../soccer.zip bootstrap
+      - ls -l dist/soccer.zip

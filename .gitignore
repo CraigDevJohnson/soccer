@@ -1,0 +1,12 @@
+# Go
+/bin/
+/dist/
+*.test
+coverage.out
+
+# Local secrets and env
+.env
+.env.*
+
+# OS / editors
+.DS_Store
