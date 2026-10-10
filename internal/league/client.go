@@ -3,6 +3,7 @@ package league
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -64,13 +65,17 @@ func (c *Client) Team(ctx context.Context, teamID string) (Team, error) {
 	req.Header.Set("Accept", "application/json")
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
+		// A caller that went away is not a league outage.
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return Team{}, ctx.Err()
+		}
 		return Team{}, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
 	defer resp.Body.Close()
 	switch {
-	// soccer_scraper read any refusal as a wrong Team ID; a 4xx keeps that
-	// meaning, while a 5xx means the league itself is in trouble.
-	case resp.StatusCode >= 400 && resp.StatusCode < 500:
+	// Only answers that say the Team is absent mean a wrong Team ID; rate
+	// limits, refusals and 5xx mean the league itself is in trouble.
+	case resp.StatusCode == http.StatusBadRequest, resp.StatusCode == http.StatusNotFound, resp.StatusCode == http.StatusGone:
 		return Team{}, ErrTeamNotFound
 	case resp.StatusCode != http.StatusOK:
 		return Team{}, fmt.Errorf("%w: status %d", ErrUnavailable, resp.StatusCode)

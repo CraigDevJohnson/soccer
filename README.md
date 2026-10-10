@@ -28,7 +28,9 @@ Boise only. A person finds a Team by Team ID, by name search, or by browsing the
 
 A Session link's token carries that choice and the moment it was made, so nothing about a Visitor is stored. Games starting after that moment are in unless excluded, so games the league posts later join the link by themselves.
 
-Errors are JSON `{code, message}`: `invalid_team_id` (400), `team_not_found` (404), `invalid_link` (404), `league_unavailable` (503, also logged as a `league_unavailable` line for an alert), and `not_connected` (501) for the name search and division browsing until the league addresses behind them are wired in.
+Errors are JSON `{code, message}`: `invalid_team_id` (400), `team_not_found` (404), `invalid_link` (404), `not_found` and `method_not_allowed` for unknown routes, `league_unavailable` (503, also logged as a `league_unavailable` line for an alert), and `not_connected` (501) for the name search and division browsing until the league addresses behind them are wired in.
+
+When the league fails for any one Team, creating or serving a Session link answers 503 rather than leaving that Team out: a link must never lose a Team for good, and a calendar app keeps its last full copy on a 503 but would delete the missing Team's games on a 200.
 
 ## Logs
 

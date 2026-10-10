@@ -4,6 +4,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -38,6 +39,13 @@ func (h *Handler) Router() http.Handler {
 	r.Use(requestLogger(h.Log))
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(8 * time.Second))
+
+	r.NotFound(func(w http.ResponseWriter, _ *http.Request) {
+		writeError(w, http.StatusNotFound, "not_found", "no such route")
+	})
+	r.MethodNotAllowed(func(w http.ResponseWriter, _ *http.Request) {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed on this route")
+	})
 
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	r.Get("/teams", h.searchTeams)
@@ -174,6 +182,12 @@ func (h *Handler) createLink(w http.ResponseWriter, r *http.Request) {
 		h.scheduleError(w, err)
 		return
 	}
+	// A Team the league failed to answer for would be dropped from the link
+	// for good, so the link waits until the league answers for every Team.
+	if s.Unavailable() {
+		h.leagueError(w, league.ErrUnavailable)
+		return
+	}
 	sel.TeamIDs = s.TeamIDs()
 	token, err := link.Encode(sel)
 	if err != nil {
@@ -202,6 +216,11 @@ func (h *Handler) serveLink(w http.ResponseWriter, r *http.Request) {
 		// rather than an error, so the app quietly shows nothing.
 	case err != nil:
 		h.scheduleError(w, err)
+		return
+	case s.Unavailable():
+		// A 200 missing one Team's games would make the calendar app drop
+		// them; a 503 makes it keep its last full copy.
+		h.leagueError(w, league.ErrUnavailable)
 		return
 	}
 	body, err := h.render(s, sel)
@@ -252,6 +271,9 @@ func (h *Handler) scheduleError(w http.ResponseWriter, err error) {
 
 func (h *Handler) leagueError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, context.Canceled):
+		// The caller went away; not an outage, so no alert line.
+		writeError(w, http.StatusServiceUnavailable, "canceled", "request canceled")
 	case errors.Is(err, league.ErrNotConnected):
 		writeError(w, http.StatusNotImplemented, "not_connected", "this lookup is not connected to the league yet")
 	case errors.Is(err, league.ErrTeamNotFound):

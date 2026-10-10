@@ -2,6 +2,8 @@ package link
 
 import (
 	"encoding/base64"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -72,5 +74,15 @@ func TestDecodeRejectsGarbage(t *testing.T) {
 		if _, err := Decode(token); err == nil {
 			t.Errorf("%s: decoded", name)
 		}
+	}
+}
+
+func TestEncodeRefusesTokensDecodeWouldReject(t *testing.T) {
+	ids := make([]string, maxGames)
+	for i := range ids {
+		ids[i] = strings.Repeat("g", maxGameID-3) + strconv.Itoa(100+i)
+	}
+	if _, err := Encode(schedule.Selection{TeamIDs: []string{"111111"}, Excluded: ids, Since: time.Now()}); err == nil {
+		t.Fatal("encoded a token longer than Decode accepts")
 	}
 }

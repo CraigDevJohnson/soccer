@@ -41,6 +41,17 @@ type Failure struct {
 	Reason string `json:"reason"`
 }
 
+// Unavailable reports whether the league failed for any Team, as opposed to
+// Team IDs it simply does not know.
+func (s Schedule) Unavailable() bool {
+	for _, f := range s.Failed {
+		if f.Reason == "unavailable" {
+			return true
+		}
+	}
+	return false
+}
+
 // Game is a game in a combined schedule. TeamIDs names the chosen Teams that
 // play in it, so a game between two of them appears once.
 type Game struct {
@@ -117,6 +128,9 @@ func Combine(ctx context.Context, src league.Teams, teamIDs []string, now time.T
 		})
 	}
 	_ = g.Wait()
+	if err := ctx.Err(); errors.Is(err, context.Canceled) {
+		return Schedule{}, err
+	}
 
 	s := Schedule{Teams: []Team{}, Games: []Game{}, Failed: []Failure{}}
 	byKey := map[string]int{}

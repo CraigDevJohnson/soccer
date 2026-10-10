@@ -75,6 +75,8 @@ func TestTeamErrors(t *testing.T) {
 	}{
 		{"not found", http.StatusNotFound, ``, ErrTeamNotFound},
 		{"bad request", http.StatusBadRequest, ``, ErrTeamNotFound},
+		{"rate limited", http.StatusTooManyRequests, ``, ErrUnavailable},
+		{"refused", http.StatusForbidden, ``, ErrUnavailable},
 		{"empty team", http.StatusOK, `{"team": {"team_name": ""}, "games": []}`, ErrTeamNotFound},
 		{"server error", http.StatusBadGateway, ``, ErrUnavailable},
 		{"garbage", http.StatusOK, `<html>`, ErrUnavailable},
@@ -131,5 +133,15 @@ func TestUnconnected(t *testing.T) {
 	}
 	if _, err := d.DivisionTeams(context.Background(), "1"); !errors.Is(err, ErrNotConnected) {
 		t.Fatal(err)
+	}
+}
+
+func TestTeamCanceledIsNotAnOutage(t *testing.T) {
+	c, _ := serve(t, http.StatusOK, sampleTeam)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := c.Team(ctx, "123456")
+	if !errors.Is(err, context.Canceled) || errors.Is(err, ErrUnavailable) {
+		t.Fatalf("err = %v", err)
 	}
 }

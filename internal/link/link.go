@@ -44,7 +44,11 @@ func Encode(sel schedule.Selection) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return base64.RawURLEncoding.EncodeToString(b), nil
+	token := base64.RawURLEncoding.EncodeToString(b)
+	if len(token) > maxTokenLen {
+		return "", errors.New("too many games ticked or unticked for one link")
+	}
+	return token, nil
 }
 
 // Decode reads a token back into a Selection.

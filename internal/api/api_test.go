@@ -24,10 +24,13 @@ func at(day, hour int) time.Time {
 
 var now = at(10, 12)
 
-type fakeTeams struct{ down bool }
+type fakeTeams struct {
+	down     bool
+	downOnly string // one Team ID the league fails for
+}
 
 func (f fakeTeams) Team(_ context.Context, id string) (league.Team, error) {
-	if f.down {
+	if f.down || id == f.downOnly {
 		return league.Team{}, league.ErrUnavailable
 	}
 	switch id {
@@ -300,5 +303,54 @@ func TestLambdaAdapter(t *testing.T) {
 	}
 	if resp.StatusCode != http.StatusOK || !strings.Contains(resp.Body, `"name":"KICKERS"`) {
 		t.Fatalf("%d %s", resp.StatusCode, resp.Body)
+	}
+}
+
+func TestPartialOutageNeverDropsATeam(t *testing.T) {
+	h, _ := newServer(t, fakeTeams{}, fakeDirectory{})
+	created := decode[struct{ Token string }](t, do(t, h, "POST", "/links", `{"team_ids":["111111","222222"]}`))
+
+	flaky, _ := newServer(t, fakeTeams{downOnly: "222222"}, fakeDirectory{})
+	// Creating a link would lose KICKERS for good.
+	if rec := do(t, flaky, "POST", "/links", `{"team_ids":["111111","222222"]}`); rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	// Serving a link without KICKERS would make the app delete its games.
+	if rec := do(t, flaky, "GET", "/links/"+created.Token, ""); rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("serve: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestRouterErrorsAreJSON(t *testing.T) {
+	h, _ := newServer(t, fakeTeams{}, fakeDirectory{})
+	for _, tc := range []struct {
+		method, path string
+		status       int
+		code         string
+	}{
+		{"GET", "/nowhere", http.StatusNotFound, "not_found"},
+		{"DELETE", "/links/abc", http.StatusMethodNotAllowed, "method_not_allowed"},
+	} {
+		rec := do(t, h, tc.method, tc.path, "")
+		if rec.Code != tc.status || rec.Header().Get("Content-Type") != "application/json" || !strings.Contains(rec.Body.String(), tc.code) {
+			t.Errorf("%s %s: %d %q %s", tc.method, tc.path, rec.Code, rec.Header().Get("Content-Type"), rec.Body)
+		}
+	}
+}
+
+type canceledTeams struct{}
+
+func (canceledTeams) Team(ctx context.Context, _ string) (league.Team, error) {
+	return league.Team{}, ctx.Err()
+}
+
+func TestCanceledRequestIsNotAnOutage(t *testing.T) {
+	h, logs := newServer(t, canceledTeams{}, fakeDirectory{})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req := httptest.NewRequest("GET", "/teams/111111", nil).WithContext(ctx)
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	if strings.Contains(logs.String(), "league_unavailable") {
+		t.Fatalf("cancellation raised an outage alert: %s", logs)
 	}
 }
