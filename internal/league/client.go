@@ -31,16 +31,23 @@ func NewClient(baseURL string) *Client {
 	}
 }
 
-// teamResponse is the league's answer for GET /teams/{id}, as soccer_scraper
-// last saw it. Numbers and strings are both accepted where the league might
-// have changed its mind since, and a missing "team" object is told apart
-// from an empty one.
+// teamResponse is the league's answer for GET /teams/{id}, as seen live on
+// 2026-10-10: a "team" object, its "games", the division "standings" and a
+// "roster". The game ID is "UGameID"; soccer_scraper read "game_id", which
+// the league no longer sends, so both are accepted. Numbers and strings are
+// both accepted where the league might change its mind, and a missing
+// "team" object is told apart from an empty one.
 type teamResponse struct {
 	Team *struct {
-		Season   flexString `json:"Season"`
-		TeamName string     `json:"team_name"`
+		UTeamID      flexString `json:"UTeamID"`
+		TeamName     string     `json:"team_name"`
+		DivisionName string     `json:"division_name"`
+		DivCode      string     `json:"div_code"`
+		UDivSeasonID flexString `json:"UDivSeasonID"`
+		Season       flexString `json:"Season"`
 	} `json:"team"`
 	Games []struct {
+		UGameID           flexString `json:"UGameID"`
 		GameID            flexString `json:"game_id"`
 		SchedGameDateTime string     `json:"SchedGameDateTime"`
 		FieldName         string     `json:"field_name"`
@@ -122,7 +129,12 @@ func (c *Client) Team(ctx context.Context, teamID string) (Team, error) {
 		return Team{}, ErrTeamNotFound
 	}
 
-	team := Team{ID: id, Name: body.Team.TeamName, Games: []Game{}}
+	team := Team{
+		ID:       id,
+		Name:     body.Team.TeamName,
+		Division: Division{ID: string(body.Team.UDivSeasonID), Name: body.Team.DivisionName, Code: body.Team.DivCode},
+		Games:    []Game{},
+	}
 	if s := string(body.Team.Season); s != "" && s != "0" {
 		team.Season = s
 	}
@@ -147,8 +159,12 @@ func (c *Client) Team(ctx context.Context, teamID string) (Team, error) {
 		if err != nil {
 			return Team{}, fmt.Errorf("%w: team %s game %q: %v", ErrUnavailable, id, string(g.GameID), err)
 		}
+		gameID := string(g.UGameID)
+		if gameID == "" {
+			gameID = string(g.GameID)
+		}
 		team.Games = append(team.Games, Game{
-			ID:    string(g.GameID),
+			ID:    gameID,
 			Start: start,
 			Field: field,
 			Home:  g.HomeTeam.TeamName,

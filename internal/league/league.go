@@ -38,11 +38,14 @@ func mustLoad(name string) *time.Location {
 }
 
 // Team is one Team for one Session, with every game the league lists for it.
+// A Team ID belongs to one season: the same people get a new Team ID when
+// they sign up again. Season is the league's own season number.
 type Team struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Season string `json:"season,omitempty"`
-	Games  []Game `json:"games"`
+	ID       string   `json:"id"`
+	Name     string   `json:"name"`
+	Division Division `json:"division"`
+	Season   string   `json:"season,omitempty"`
+	Games    []Game   `json:"games"`
 }
 
 // Game is one league game. Start is in Mountain time.
@@ -61,10 +64,13 @@ type TeamSummary struct {
 	Division string `json:"division,omitempty"`
 }
 
-// Division is what Let's Play Soccer calls a league at the Facility.
+// Division is what Let's Play Soccer calls a league at the Facility, for
+// one season: "Coed Over 30 B Sun". ID is the league's UDivSeasonID and
+// Code its short form ("CO30BSun").
 type Division struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
+	Code string `json:"code,omitempty"`
 }
 
 // Teams looks a Team up by its Team ID.

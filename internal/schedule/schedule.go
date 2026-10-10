@@ -30,9 +30,10 @@ func (e *InvalidError) Error() string { return fmt.Sprintf("invalid team IDs: %v
 
 // Team is a Team that was read, without its games.
 type Team struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Season string `json:"season,omitempty"`
+	ID       string          `json:"id"`
+	Name     string          `json:"name"`
+	Division league.Division `json:"division"`
+	Season   string          `json:"season,omitempty"`
 }
 
 // Failure is a Team ID that could not be read: "not_found" or "unavailable".
@@ -159,7 +160,7 @@ func Combine(ctx context.Context, src league.Teams, teamIDs []string, now time.T
 			s.Failed = append(s.Failed, Failure{TeamID: ids[i], Reason: reason})
 			continue
 		}
-		s.Teams = append(s.Teams, Team{ID: t.ID, Name: t.Name, Season: t.Season})
+		s.Teams = append(s.Teams, Team{ID: t.ID, Name: t.Name, Division: t.Division, Season: t.Season})
 		for _, lg := range t.Games {
 			key := gameKey(lg)
 			if j, ok := byKey[key]; ok {

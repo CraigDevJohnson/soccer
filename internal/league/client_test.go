@@ -9,20 +9,26 @@ import (
 	"time"
 )
 
+// sampleTeam is the league's live shape (2026-10-10), trimmed: game IDs are
+// "UGameID" and times carry milliseconds.
 const sampleTeam = `{
-  "team": {"Season": 2026, "team_name": "ROVERS"},
+  "team": {"UTeamID": 123456, "team_name": "ROVERS", "division_name": "Coed Over 30 B Sun", "div_code": "CO30BSun",
+           "Dropped": false, "UDivSeasonID": 110046, "Season": 2026, "facility_name": "Boise", "FacilityID": 4},
   "games": [
-    {"game_id": "g1", "SchedGameDateTime": "2026-10-14T19:15:00Z", "field_name": "Field 3", "Field": 3,
-     "home_team": {"team_name": "ROVERS"}, "visitor_team": {"team_name": "KICKERS"}},
-    {"game_id": "g2", "SchedGameDateTime": "2026-10-21T20:00:00+00:00", "field_name": "", "Field": 2,
+    {"UGameID": 2988396, "SchedGameDateTime": "2026-10-14T19:15:00.000Z", "schedGameEndTime": null, "field_name": "Field 3", "Field": 3,
+     "result": null, "FacilityID": 4, "UTeam1": 123456, "UTeam2": 222222,
+     "home_team": {"UTeamID": 123456, "team_name": "ROVERS"}, "visitor_team": {"UTeamID": 222222, "team_name": "KICKERS"}},
+    {"UGameID": 2995453, "SchedGameDateTime": "2026-10-21T20:00:00+00:00", "field_name": "", "Field": 2,
      "home_team": {"team_name": "BANDITS"}, "visitor_team": {"team_name": "ROVERS"}},
-    {"game_id": "unscheduled", "SchedGameDateTime": "", "Field": 1,
+    {"UGameID": 1, "SchedGameDateTime": "", "Field": 1,
      "home_team": {"team_name": "A"}, "visitor_team": {"team_name": "B"}},
-    {"game_id": "no-field", "SchedGameDateTime": "2026-10-28T20:00:00Z", "Field": 0,
+    {"UGameID": 2, "SchedGameDateTime": "2026-10-28T20:00:00Z", "Field": 0,
      "home_team": {"team_name": "A"}, "visitor_team": {"team_name": "B"}},
-    {"game_id": "no-team", "SchedGameDateTime": "2026-10-28T20:00:00Z", "Field": 1,
+    {"UGameID": 3, "SchedGameDateTime": "2026-10-28T20:00:00Z", "Field": 1,
      "home_team": {"team_name": ""}, "visitor_team": {"team_name": "B"}}
-  ]
+  ],
+  "standings": [{"Season": 2026, "TeamName": "ROVERS", "UTeamID": 123456, "UDivSeasonID": 110046, "position": 1}],
+  "roster": null
 }`
 
 func serve(t *testing.T, status int, body string) (*Client, *int) {
@@ -49,11 +55,17 @@ func TestTeamParsesGamesInMountainTime(t *testing.T) {
 	if team.ID != "123456" || team.Name != "ROVERS" || team.Season != "2026" {
 		t.Fatalf("team = %+v", team)
 	}
+	if d := team.Division; d.ID != "110046" || d.Name != "Coed Over 30 B Sun" || d.Code != "CO30BSun" {
+		t.Fatalf("division = %+v", d)
+	}
 	if len(team.Games) != 2 {
 		t.Fatalf("got %d games, want 2 (unscheduled rows skipped): %+v", len(team.Games), team.Games)
 	}
 	g := team.Games[0]
 	want := time.Date(2026, 10, 14, 19, 15, 0, 0, Mountain)
+	if g.ID != "2988396" {
+		t.Fatalf("game ID = %q, want the league's UGameID", g.ID)
+	}
 	if !g.Start.Equal(want) || g.Field != "3" || g.Home != "ROVERS" || g.Away != "KICKERS" {
 		t.Fatalf("game 0 = %+v, want start %v", g, want)
 	}
@@ -167,7 +179,8 @@ func TestLeadingZeroTeamID(t *testing.T) {
 	}
 }
 
-// The league may have changed number/string choices since soccer_scraper.
+// The league may change number/string choices again, and soccer_scraper's
+// "game_id" is still read when "UGameID" is absent.
 func TestTeamAcceptsNumbersOrStrings(t *testing.T) {
 	c, _ := serve(t, http.StatusOK, `{
 	  "team": {"Season": "2026 Fall", "team_name": "ROVERS"},
