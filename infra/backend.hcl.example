@@ -1,6 +1,7 @@
-# Copy to infra/backend.hcl (gitignored) and fill in; see docs/operations/deploy.md.
-# The state bucket is the one the site's own roots use, with a key of this
-# backend's own under soccer/.
+# Copy to infra/backend.<env>.hcl (gitignored; backend.dev.hcl for the dev
+# site, backend.prod.hcl for production) and fill in; see
+# docs/operations/deploy.md. The state bucket is the one the site's own roots
+# use, with a key of this deployment's own under soccer/<env>/.
 bucket = "example-replace-with-the-private-state-bucket"
 key    = "soccer/dev/terraform.tfstate"
 region = "us-west-2"
