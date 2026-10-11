@@ -8,5 +8,23 @@ coverage.out
 .env
 .env.*
 
+# OpenTofu: local data, state, plans, and the private deployment inputs
+# (the committed .example files stand in for them)
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+!*.tfvars.json.example
+backend.hcl
+!backend.hcl.example
+
+# Provider selections are committed so CI pins the same versions
+!.terraform.lock.hcl
+
 # OS / editors
 .DS_Store

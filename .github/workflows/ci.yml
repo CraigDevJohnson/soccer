@@ -1,0 +1,66 @@
+# Checks that run on every pull request, whoever opened it, and on every push
+# to main. Nothing here can reach an AWS account: no secrets, no cloud role,
+# and a read-only token. Plans and applies run from a developer's computer
+# (docs/operations/deploy.md).
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: Go
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.x
+
+      - name: gofmt
+        run: task fmt:check
+
+      - name: go vet
+        run: task vet
+
+      - name: go test
+        run: task test
+
+      # The same zip the deploy uses, so a pull request that cannot build
+      # for Lambda fails here and not on a developer's computer.
+      - name: Build the Lambda zip
+        run: task lambda
+
+  infra:
+    name: Infrastructure
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: 1.13.1
+          tofu_wrapper: false
+
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.x
+
+      - name: Format, validate and test the OpenTofu root offline
+        run: task infra:check
