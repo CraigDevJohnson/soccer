@@ -167,3 +167,13 @@ run "the_alerts_topic_must_be_in_the_same_account_and_region" {
 
   expect_failures = [var.alert_topic_arn]
 }
+
+run "extra_tags_may_not_replace_the_fixed_ones" {
+  command = plan
+
+  variables {
+    tags = { project = "something-else" }
+  }
+
+  expect_failures = [var.tags]
+}

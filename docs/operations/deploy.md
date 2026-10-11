@@ -14,6 +14,8 @@ The Schedule Downloader page (`/soccer` in [the-lobby](https://github.com/CraigD
 | Metric filter and alarm | `soccer-dev-server-league-unavailable` | Counts the code's `league_unavailable` lines and emails on the first in any five minutes |
 | Alarm | `soccer-dev-server-failing` | Lambda errors: a crash or a run that hit the timeout |
 
+The site's role is the only principal the function grants a call to. AWS also lets a principal in the same account call the URL when its own identity policy allows `lambda:InvokeFunctionUrl` and `lambda:InvokeFunction`; the account's workload roles carry neither (aws-design G7), and the administrator profile does, which step 6 uses. Unsigned requests get a 403.
+
 Both alarms notify the workloads account's existing `alerts` topic in us-west-2, which already lets CloudWatch publish and emails Craig (aws-setup `aws-design.md`, section 7). There is no new topic and no subscription to confirm. Every resource carries `project = soccer` and the tags in `tags` (aws-design G10).
 
 ## Before you start
@@ -110,7 +112,7 @@ Everything below runs in `/Users/craigjohnson/Projects/soccer`. Only step 5 chan
 
 ## Updating the code
 
-After a merge to `main`: `git pull`, `task infra:plan` (expect `Plan: 0 to add, 1 to change, 0 to destroy.`, the function's code), review, then `task infra:apply` once approved. The same source and Go toolchain give the same zip, so a plan with no code change reports no change.
+After a merge to `main`: `git pull`, `task infra:plan` (expect `Plan: 0 to add, 1 to change, 0 to destroy.`, the function's code), review, then `task infra:apply` once approved. The same source and Go toolchain give the same zip (the build strips paths and commit stamps, and the archive carries a fixed time and mode), so a merge that changes no Go code plans no change.
 
 ## Removing it
 

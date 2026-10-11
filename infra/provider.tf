@@ -4,12 +4,13 @@ provider "aws" {
   region              = var.region
   allowed_account_ids = [var.account_id]
 
+  # The fixed tags come last, so an extra tag can never replace them.
   default_tags {
-    tags = merge({
+    tags = merge(var.tags, {
       project     = "soccer"
       Environment = var.site_environment
       ManagedBy   = "opentofu"
       Repo        = "soccer"
-    }, var.tags)
+    })
   }
 }

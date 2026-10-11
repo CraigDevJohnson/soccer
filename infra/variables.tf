@@ -101,7 +101,11 @@ variable "log_retention_days" {
 }
 
 variable "tags" {
-  description = "Extra tags on every resource, such as the site's cost tag."
+  description = "Extra tags on every resource, such as the site's cost tag. The fixed tags (project, Environment, ManagedBy, Repo) cannot be overridden."
   type        = map(string)
   default     = {}
+  validation {
+    condition     = length(setintersection(keys(var.tags), ["project", "Environment", "ManagedBy", "Repo"])) == 0
+    error_message = "tags may not name project, Environment, ManagedBy or Repo; the root sets those itself."
+  }
 }

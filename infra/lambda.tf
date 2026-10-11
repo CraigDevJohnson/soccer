@@ -84,9 +84,13 @@ resource "aws_lambda_function_url" "server" {
   authorization_type = "AWS_IAM"
 }
 
-# Only the site's role may call the address. The second statement is the
-# lambda:InvokeFunction grant AWS also requires for a Function URL, limited
-# to calls that come through the URL.
+# The site's role is the only principal this function grants a call to;
+# the second statement is the lambda:InvokeFunction grant AWS also requires
+# for a Function URL, limited to calls that come through the URL. AWS lets
+# a principal in the same account call the URL on its own identity policy
+# too, so the account's workload roles carrying no lambda:InvokeFunctionUrl
+# (aws-design.md G7) is what keeps the site the only caller; the admin
+# profile can call it, which docs/operations/deploy.md uses for its check.
 resource "aws_lambda_permission" "site_url" {
   statement_id           = "AllowSiteThroughFunctionUrl"
   action                 = "lambda:InvokeFunctionUrl"
