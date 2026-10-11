@@ -7,9 +7,12 @@ version: '3'
 # For example: task infra:plan ENV=prod
 vars:
   ENV: '{{.ENV | default "dev"}}'
-
-env:
-  TF_DATA_DIR: '{{.ROOT_DIR}}/infra/.terraform.{{.ENV}}'
+  # Every tofu command names its provider cache on its own command line. A
+  # Taskfile `env` value would lose to a TF_DATA_DIR already exported in the
+  # shell (Task's rule: the process environment wins), and then `ENV=prod`
+  # would silently keep using dev's cache and backend.
+  TOFU: 'TF_DATA_DIR="{{.ROOT_DIR}}/infra/.terraform.{{.ENV}}" tofu'
+  TOFU_OFFLINE: 'TF_DATA_DIR="{{.ROOT_DIR}}/infra/.terraform" tofu'
 
 tasks:
   default:
@@ -76,13 +79,11 @@ tasks:
 
   infra:check:
     desc: Format, validate and test the OpenTofu root offline; needs no credentials
-    env:
-      TF_DATA_DIR: '{{.ROOT_DIR}}/infra/.terraform'
     cmds:
       - tofu fmt -check -recursive infra
-      - tofu -chdir=infra init -backend=false -input=false >/dev/null
-      - tofu -chdir=infra validate
-      - tofu -chdir=infra test
+      - '{{.TOFU_OFFLINE}} -chdir=infra init -backend=false -input=false >/dev/null'
+      - '{{.TOFU_OFFLINE}} -chdir=infra validate'
+      - '{{.TOFU_OFFLINE}} -chdir=infra test'
 
   infra:init:
     desc: Point the ENV deployment (default dev) at its state, from the private infra/backend.<ENV>.hcl (docs/operations/deploy.md)
@@ -92,19 +93,19 @@ tasks:
       - sh: test -f infra/backend.{{.ENV}}.hcl
         msg: "No infra/backend.{{.ENV}}.hcl: copy infra/backend.hcl.example and fill it in (docs/operations/deploy.md)"
     cmds:
-      - tofu -chdir=infra init -input=false -backend-config=backend.{{.ENV}}.hcl
+      - '{{.TOFU}} -chdir=infra init -input=false -backend-config=backend.{{.ENV}}.hcl'
 
   infra:plan:
     desc: Build the zip and plan the ENV deployment (default dev) into infra/soccer.<ENV>.tfplan (AWS_PROFILE, task infra:init first)
     deps: [infra:private, lambda]
     cmds:
-      - tofu -chdir=infra plan -input=false -var-file=deployment.{{.ENV}}.tfvars -var "package_path={{.ROOT_DIR}}/dist/soccer.zip" -out=soccer.{{.ENV}}.tfplan
+      - '{{.TOFU}} -chdir=infra plan -input=false -var-file=deployment.{{.ENV}}.tfvars -var "package_path={{.ROOT_DIR}}/dist/soccer.zip" -out=soccer.{{.ENV}}.tfplan'
 
   infra:apply:
     desc: Apply the plan task infra:plan wrote for ENV (default dev), exactly as reviewed (an approved change)
     deps: [infra:private]
     cmds:
-      - tofu -chdir=infra apply -input=false soccer.{{.ENV}}.tfplan
+      - '{{.TOFU}} -chdir=infra apply -input=false soccer.{{.ENV}}.tfplan'
 
   # Shared by plan and apply: the private inputs must exist and an AWS
   # session must be chosen. Both come from docs/operations/deploy.md.

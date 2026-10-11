@@ -92,12 +92,11 @@ Everything below runs in `/Users/craigjohnson/Projects/soccer`. Only step 5 chan
 6. **Check it from the Mac.**
 
    ```sh
-   export TF_DATA_DIR="$PWD/infra/.terraform.dev"   # which deployment `tofu output` reads; task sets it by itself
-   url=$(tofu -chdir=infra output -raw function_url); echo "$url"
+   url=$(TF_DATA_DIR="$PWD/infra/.terraform.dev" tofu -chdir=infra output -raw function_url); echo "$url"
    curl -sS -o /dev/null -w '%{http_code}\n' "${url%/}/healthz"
    ```
 
-   This prints the address, `https://<id>.lambda-url.us-west-2.on.aws/`, then `403`: an unsigned call is refused. Your administrator role may call the address, so sign one:
+   This prints the address, `https://<id>.lambda-url.us-west-2.on.aws/`, then `403`: an unsigned call is refused. A bare `tofu` command needs `TF_DATA_DIR` on its command line like that to read this deployment's cache (`task` passes it by itself); do not `export` it, because an exported value would override the `ENV` of every later `task infra:*` command. Your administrator role may call the address, so sign one:
 
    ```sh
    eval "$(aws configure export-credentials --profile workloads-admin --format env)"
@@ -111,7 +110,7 @@ Everything below runs in `/Users/craigjohnson/Projects/soccer`. Only step 5 chan
 
    This prints `204`, then the start of `{"divisions":[{"id":"…","name":"…"`: the function reached the league and read this week's divisions at Boise. The exported credentials expire with the SSO session.
 
-7. **Connect the site** in the-lobby: give its function `SOCCER_BACKEND_URL` set to `$url` and `SOCCER_BACKEND_SIGNING=lambda`, and let `site-dev-server` call `lambda:InvokeFunctionUrl` and `lambda:InvokeFunction` on `tofu -chdir=infra output -raw function_arn` (its boundary already allows `*-dev-*`). Until then `/soccer` says the backend is not answering.
+7. **Connect the site** in the-lobby: give its function `SOCCER_BACKEND_URL` set to `$url` and `SOCCER_BACKEND_SIGNING=lambda`, and let `site-dev-server` call `lambda:InvokeFunctionUrl` and `lambda:InvokeFunction` on `TF_DATA_DIR="$PWD/infra/.terraform.dev" tofu -chdir=infra output -raw function_arn` (its boundary already allows `*-dev-*`). Until then `/soccer` says the backend is not answering.
 
 ## Production
 
@@ -133,7 +132,7 @@ task infra:plan ENV=prod
 task infra:apply ENV=prod
 ```
 
-The state key is `soccer/prod/terraform.tfstate`, the plan `infra/soccer.prod.tfplan`, and the provider cache `infra/.terraform.prod`; `export TF_DATA_DIR="$PWD/infra/.terraform.prod"` before a bare `tofu -chdir=infra output`. The plan and the checks are those of steps 4 to 6 with `prod` in every name, and the site connects the same way (step 7) in its `infra/environments/prod/prod.tfvars`. When the site switches hostname, change `link_base_url` and apply again: the function's environment changes, nothing else.
+The state key is `soccer/prod/terraform.tfstate`, the plan `infra/soccer.prod.tfplan`, and the provider cache `infra/.terraform.prod`, which a bare `tofu -chdir=infra output` reads with `TF_DATA_DIR="$PWD/infra/.terraform.prod"` in front of it, as in step 6. The plan and the checks are those of steps 4 to 6 with `prod` in every name, and the site connects the same way (step 7) in its `infra/environments/prod/prod.tfvars`. When the site switches hostname, change `link_base_url` and apply again: the function's environment changes, nothing else.
 
 ## Updating the code
 
@@ -141,7 +140,7 @@ After a merge to `main`: `git pull`, `task infra:plan` (expect `Plan: 0 to add, 
 
 ## Removing it
 
-`TF_DATA_DIR="$PWD/infra/.terraform.dev" tofu -chdir=infra plan -destroy -var-file=deployment.dev.tfvars -var "package_path=$PWD/dist/soccer.zip" -out=soccer.dev.tfplan`, review, then `task infra:apply` once approved (`prod` in place of `dev` for production). The site stops answering `/soccer` at once; its own resources are untouched.
+`TF_DATA_DIR="$PWD/infra/.terraform.dev" tofu -chdir=infra plan -destroy -var-file=deployment.dev.tfvars -var "package_path=$PWD/dist/soccer.zip" -out=soccer.dev.tfplan`, review, then `task infra:apply` once approved. For production, put `prod` in place of each `dev` in that plan command and apply with `task infra:apply ENV=prod`; without `ENV=prod` the apply looks for dev's plan file. The site stops answering `/soccer` at once; its own resources are untouched.
 
 ## Cost
 
