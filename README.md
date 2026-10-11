@@ -47,9 +47,10 @@ One JSON line per request with the route pattern (never the path, so link tokens
 Needs Go (see `go.mod`) and [Task](https://taskfile.dev).
 
 ```sh
-task run        # http://127.0.0.1:8081 (SOCCER_ADDR to change)
-task ci         # gofmt, vet, tests
-task lambda     # dist/soccer.zip for provided.al2023 on arm64
+task run          # http://127.0.0.1:8081 (SOCCER_ADDR to change)
+task ci           # gofmt, vet, tests, and the OpenTofu checks below
+task lambda       # dist/soccer.zip for provided.al2023 on arm64
+task infra:check  # format, validate and test infra/ offline (needs OpenTofu)
 ```
 
 | Variable | Meaning |
@@ -58,6 +59,10 @@ task lambda     # dist/soccer.zip for provided.al2023 on arm64
 | `LEAGUE_FACILITY_ID` | The Facility in the league's `GET /facilities` list; defaults to `4`, Boise |
 | `LINK_BASE_URL` | Public address Session link tokens are appended to, such as `https://craigdevjohnson.com/soccer/link/`; when unset, `POST /links` returns only the token |
 | `SOCCER_ADDR` | Local listen address |
+
+## Deploying it
+
+`infra/` is the OpenTofu for one deployment: the function, its Function URL that only the site's role may call, its log group and two alarms. The private inputs (account, site role, alerts topic, link address) are gitignored copies of the `.example` files beside it. [docs/operations/deploy.md](docs/operations/deploy.md) has the exact steps; `task infra:plan` and `task infra:apply` run them, and the apply is an approved change (aws-setup's `aws-design.md`). GitHub Actions runs `task ci` on every pull request and never touches AWS.
 
 ## Licence
 

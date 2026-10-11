@@ -39,6 +39,7 @@ tasks:
       - task: fmt:check
       - task: vet
       - task: test
+      - task: infra:check
 
   run:
     desc: Serve on a developer's computer at http://127.0.0.1:8081
@@ -49,6 +50,58 @@ tasks:
     desc: Build the Lambda zip, one static arm64 binary named bootstrap (ADR 0002)
     cmds:
       - mkdir -p dist/soccer
-      - CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o dist/soccer/bootstrap ./cmd/soccer
-      - cd dist/soccer && rm -f ../soccer.zip && zip -q -X ../soccer.zip bootstrap
+      - CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -buildvcs=false -ldflags="-s -w" -o dist/soccer/bootstrap ./cmd/soccer
+      # The same source gives the same zip, so a deploy plan with no code
+      # change reports none: the binary carries no build path or commit
+      # (-trimpath, -buildvcs=false), and the archive carries a fixed mode and
+      # time and no extra fields (-X) instead of this build's.
+      - cd dist/soccer && chmod 0755 bootstrap && TZ=UTC touch -t 198001010000 bootstrap && rm -f ../soccer.zip && TZ=UTC zip -q -X ../soccer.zip bootstrap
       - ls -l dist/soccer.zip
+
+  infra:fmt:
+    desc: Format the OpenTofu files
+    cmds:
+      - tofu fmt -recursive infra
+
+  infra:check:
+    desc: Format, validate and test the OpenTofu root offline; needs no credentials
+    cmds:
+      - tofu fmt -check -recursive infra
+      - tofu -chdir=infra init -backend=false -input=false >/dev/null
+      - tofu -chdir=infra validate
+      - tofu -chdir=infra test
+
+  infra:init:
+    desc: Point the root at its state, from the private infra/backend.hcl (docs/operations/deploy.md)
+    preconditions:
+      - sh: test -n "$AWS_PROFILE"
+        msg: "Set AWS_PROFILE to the workloads account's admin profile, then: aws sso login"
+      - sh: test -f infra/backend.hcl
+        msg: "No infra/backend.hcl: copy infra/backend.hcl.example and fill it in (docs/operations/deploy.md)"
+    cmds:
+      - tofu -chdir=infra init -input=false -backend-config=backend.hcl
+
+  infra:plan:
+    desc: Build the zip and plan the deploy into infra/soccer.tfplan (AWS_PROFILE, task infra:init first)
+    deps: [infra:private, lambda]
+    cmds:
+      - tofu -chdir=infra plan -input=false -var-file=deployment.tfvars -var "package_path={{.ROOT_DIR}}/dist/soccer.zip" -out=soccer.tfplan
+
+  infra:apply:
+    desc: Apply the plan task infra:plan wrote, exactly as reviewed (an approved change)
+    deps: [infra:private]
+    cmds:
+      - tofu -chdir=infra apply -input=false soccer.tfplan
+
+  # Shared by plan and apply: the private inputs must exist and an AWS
+  # session must be chosen. Both come from docs/operations/deploy.md.
+  infra:private:
+    internal: true
+    silent: true
+    preconditions:
+      - sh: test -n "$AWS_PROFILE"
+        msg: "Set AWS_PROFILE to the workloads account's admin profile, then: aws sso login"
+      - sh: test -f infra/backend.hcl
+        msg: "No infra/backend.hcl: copy infra/backend.hcl.example and fill it in (docs/operations/deploy.md)"
+      - sh: test -f infra/deployment.tfvars
+        msg: "No infra/deployment.tfvars: copy infra/deployment.tfvars.example and fill it in (docs/operations/deploy.md)"

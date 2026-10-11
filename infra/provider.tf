@@ -1,0 +1,16 @@
+# Credentials come from the environment: AWS_PROFILE set to the workloads
+# account's admin profile after `aws sso login` (aws-setup, aws-design.md).
+provider "aws" {
+  region              = var.region
+  allowed_account_ids = [var.account_id]
+
+  # The fixed tags come last, so an extra tag can never replace them.
+  default_tags {
+    tags = merge(var.tags, {
+      project     = "soccer"
+      Environment = var.site_environment
+      ManagedBy   = "opentofu"
+      Repo        = "soccer"
+    })
+  }
+}
