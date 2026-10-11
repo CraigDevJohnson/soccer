@@ -1,5 +1,7 @@
-# Copy to infra/deployment.tfvars (gitignored) and replace every example with
-# the private value; see docs/operations/deploy.md. Never commit real values.
+# Copy to infra/deployment.<env>.tfvars (gitignored; deployment.dev.tfvars for
+# the dev site, deployment.prod.tfvars for production) and replace every
+# example with the private value; see docs/operations/deploy.md. Never commit
+# real values.
 
 account_id = "111122223333" # the workloads account
 

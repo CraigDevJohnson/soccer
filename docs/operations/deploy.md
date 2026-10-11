@@ -1,6 +1,6 @@
 # Deploying the backend
 
-The Schedule Downloader page (`/soccer` in [the-lobby](https://github.com/CraigDevJohnson/the-lobby)) calls this backend through a Lambda Function URL that accepts only the site's own role, with requests the site signs (the-lobby ADR 0006). `infra/` is the OpenTofu for one such deployment. It is named for the site environment it serves, `soccer-<site_environment>-server`, because the site's permissions boundary lets its role call only backends named `*-<environment>-*`. Nothing here is public: there is no API Gateway, no custom domain and no unsigned path in.
+The Schedule Downloader page (`/soccer` in [the-lobby](https://github.com/CraigDevJohnson/the-lobby)) calls this backend through a Lambda Function URL that accepts only the site's own role, with requests the site signs (the-lobby ADR 0006). `infra/` is the OpenTofu for one such deployment, and there is one deployment per site environment (dev, and production), chosen with `ENV` on the `task infra:*` commands (default `dev`). Each is named for the site environment it serves, `soccer-<site_environment>-server`, because the site's permissions boundary lets its role call only backends named `*-<environment>-*`, and each has its own state, private inputs and plan file. Nothing here is public: there is no API Gateway, no custom domain and no unsigned path in.
 
 ## What it creates
 
@@ -42,11 +42,13 @@ Everything below runs in `/Users/craigjohnson/Projects/soccer`. Only step 5 chan
 
    ```sh
    bucket=$(aws s3api list-buckets --query "Buckets[?starts_with(Name,'craigdevjohnson-tofu-state')].Name" --output text); echo "$bucket"
-   sed "s/example-replace-with-the-private-state-bucket/$bucket/" infra/backend.hcl.example > infra/backend.hcl
+   sed "s/example-replace-with-the-private-state-bucket/$bucket/" infra/backend.hcl.example > infra/backend.dev.hcl
    task infra:init
    ```
 
-   The first line prints exactly one bucket name; if it prints nothing or two names, stop. `task infra:init` prints `Successfully configured the backend "s3"!`, the provider install, and ends with `OpenTofu has been successfully initialized!`. `infra/backend.hcl` is gitignored.
+   The first line prints exactly one bucket name; if it prints nothing or two names, stop. `task infra:init` prints `Successfully configured the backend "s3"!`, the provider install, and ends with `OpenTofu has been successfully initialized!`. `infra/backend.dev.hcl` is gitignored, and so is the provider cache the init writes, `infra/.terraform.dev`.
+
+   A checkout that deployed before the `ENV` switch (October 2026) has `infra/backend.hcl` and `infra/deployment.tfvars` instead: rename them to `backend.dev.hcl` and `deployment.dev.tfvars` and run `task infra:init` again. The state is in the bucket, so nothing else changes.
 
 3. **Write the private inputs.** Read the site's role and the alerts topic:
 
@@ -58,7 +60,7 @@ Everything below runs in `/Users/craigjohnson/Projects/soccer`. Only step 5 chan
    The first prints `arn:aws:iam::<account>:role/site-dev-server`, the second `arn:aws:sns:us-west-2:<account>:alerts`, one line each. Then write the file (gitignored) and read it back:
 
    ```sh
-   cat > infra/deployment.tfvars <<EOF
+   cat > infra/deployment.dev.tfvars <<EOF
    account_id       = "$account"
    site_environment = "dev"
    site_role_arn    = "$site_role"
@@ -66,7 +68,7 @@ Everything below runs in `/Users/craigjohnson/Projects/soccer`. Only step 5 chan
    alert_topic_arn  = "$topic"
    tags             = { Site = "craigdevjohnson.com" }
    EOF
-   cat infra/deployment.tfvars
+   cat infra/deployment.dev.tfvars
    ```
 
    Every value must be filled in; an empty `""` means a lookup above printed nothing. `link_base_url` is where the dev site serves Session links, so the backend's `POST /links` answers with addresses on the site. `Site` is the-lobby's cost tag, so the site's $5 budget covers this backend. The league settings stay at the code's defaults (Boise); `infra/deployment.tfvars.example` shows how to set them.
@@ -77,7 +79,7 @@ Everything below runs in `/Users/craigjohnson/Projects/soccer`. Only step 5 chan
    task infra:plan
    ```
 
-   This builds `dist/soccer.zip` (it prints the zip's `ls -l` line), then plans. Expect creates only, ending in `Plan: 10 to add, 0 to change, 0 to destroy.`: `aws_cloudwatch_log_group.server`, `aws_iam_role.server`, `aws_iam_role_policy.server`, `aws_lambda_function.server`, `aws_lambda_function_url.server`, `aws_lambda_permission.site_url`, `aws_lambda_permission.site_invoke`, `aws_cloudwatch_log_metric_filter.league_unavailable`, `aws_cloudwatch_metric_alarm.league_unavailable` and `aws_cloudwatch_metric_alarm.failing`. Any change or destroy, or a resource not on that list, is a stop condition. The plan is saved as `infra/soccer.tfplan` (gitignored), and that exact plan is what the next step applies.
+   This builds `dist/soccer.zip` (it prints the zip's `ls -l` line), then plans. Expect creates only, ending in `Plan: 10 to add, 0 to change, 0 to destroy.`: `aws_cloudwatch_log_group.server`, `aws_iam_role.server`, `aws_iam_role_policy.server`, `aws_lambda_function.server`, `aws_lambda_function_url.server`, `aws_lambda_permission.site_url`, `aws_lambda_permission.site_invoke`, `aws_cloudwatch_log_metric_filter.league_unavailable`, `aws_cloudwatch_metric_alarm.league_unavailable` and `aws_cloudwatch_metric_alarm.failing`. Any change or destroy, or a resource not on that list, is a stop condition. The plan is saved as `infra/soccer.dev.tfplan` (gitignored), and that exact plan is what the next step applies.
 
 5. **Apply** the plan you reviewed and approved.
 
@@ -90,11 +92,11 @@ Everything below runs in `/Users/craigjohnson/Projects/soccer`. Only step 5 chan
 6. **Check it from the Mac.**
 
    ```sh
-   url=$(tofu -chdir=infra output -raw function_url); echo "$url"
+   url=$(TF_DATA_DIR="$PWD/infra/.terraform.dev" tofu -chdir=infra output -raw function_url); echo "$url"
    curl -sS -o /dev/null -w '%{http_code}\n' "${url%/}/healthz"
    ```
 
-   This prints the address, `https://<id>.lambda-url.us-west-2.on.aws/`, then `403`: an unsigned call is refused. Your administrator role may call the address, so sign one:
+   This prints the address, `https://<id>.lambda-url.us-west-2.on.aws/`, then `403`: an unsigned call is refused. A bare `tofu` command needs `TF_DATA_DIR` on its command line like that to read this deployment's cache (`task` passes it by itself); do not `export` it, because an exported value would override the `ENV` of every later `task infra:*` command. Your administrator role may call the address, so sign one:
 
    ```sh
    eval "$(aws configure export-credentials --profile workloads-admin --format env)"
@@ -108,15 +110,37 @@ Everything below runs in `/Users/craigjohnson/Projects/soccer`. Only step 5 chan
 
    This prints `204`, then the start of `{"divisions":[{"id":"…","name":"…"`: the function reached the league and read this week's divisions at Boise. The exported credentials expire with the SSO session.
 
-7. **Connect the site** in the-lobby: give its function `SOCCER_BACKEND_URL` set to `$url` and `SOCCER_BACKEND_SIGNING=lambda`, and let `site-dev-server` call `lambda:InvokeFunctionUrl` and `lambda:InvokeFunction` on `tofu -chdir=infra output -raw function_arn` (its boundary already allows `*-dev-*`). Until then `/soccer` says the backend is not answering.
+7. **Connect the site** in the-lobby: give its function `SOCCER_BACKEND_URL` set to `$url` and `SOCCER_BACKEND_SIGNING=lambda`, and let `site-dev-server` call `lambda:InvokeFunctionUrl` and `lambda:InvokeFunction` on `TF_DATA_DIR="$PWD/infra/.terraform.dev" tofu -chdir=infra output -raw function_arn` (its boundary already allows `*-dev-*`). Until then `/soccer` says the backend is not answering.
+
+## Production
+
+The production site (`next.craigdevjohnson.com` until the switch to `craigdevjohnson.com`, the-lobby `docs/baseline.md`) gets its own deployment, `soccer-prod-server`, from the same steps with `ENV=prod`. Its site must already be deployed, because the Function URL is granted to `site-prod-server`.
+
+```sh
+sed "s/example-replace-with-the-private-state-bucket/$bucket/; s#soccer/dev/#soccer/prod/#" infra/backend.hcl.example > infra/backend.prod.hcl
+task infra:init ENV=prod
+site_role=$(aws iam list-roles --query "Roles[?RoleName=='site-prod-server'].Arn" --output text); echo "$site_role"
+cat > infra/deployment.prod.tfvars <<EOF
+account_id       = "$account"
+site_environment = "prod"
+site_role_arn    = "$site_role"
+link_base_url    = "https://next.craigdevjohnson.com/soccer/link/"
+alert_topic_arn  = "$topic"
+tags             = { Site = "craigdevjohnson.com" }
+EOF
+task infra:plan ENV=prod
+task infra:apply ENV=prod
+```
+
+The state key is `soccer/prod/terraform.tfstate`, the plan `infra/soccer.prod.tfplan`, and the provider cache `infra/.terraform.prod`, which a bare `tofu -chdir=infra output` reads with `TF_DATA_DIR="$PWD/infra/.terraform.prod"` in front of it, as in step 6. The plan and the checks are those of steps 4 to 6 with `prod` in every name, and the site connects the same way (step 7) in its `infra/environments/prod/prod.tfvars`. When the site switches hostname, change `link_base_url` and apply again: the function's environment changes, nothing else.
 
 ## Updating the code
 
-After a merge to `main`: `git pull`, `task infra:plan` (expect `Plan: 0 to add, 1 to change, 0 to destroy.`, the function's code), review, then `task infra:apply` once approved. The same source and Go toolchain give the same zip (the build strips paths and commit stamps, and the archive carries a fixed time and mode), so a merge that changes no Go code plans no change.
+After a merge to `main`: `git pull`, `task infra:plan` (expect `Plan: 0 to add, 1 to change, 0 to destroy.`, the function's code), review, then `task infra:apply` once approved; then the same with `ENV=prod`. The same source and Go toolchain give the same zip (the build strips paths and commit stamps, and the archive carries a fixed time and mode), so a merge that changes no Go code plans no change.
 
 ## Removing it
 
-`tofu -chdir=infra plan -destroy -var-file=deployment.tfvars -var "package_path=$PWD/dist/soccer.zip" -out=soccer.tfplan`, review, then `task infra:apply` once approved. The site stops answering `/soccer` at once; its own resources are untouched.
+`TF_DATA_DIR="$PWD/infra/.terraform.dev" tofu -chdir=infra plan -destroy -var-file=deployment.dev.tfvars -var "package_path=$PWD/dist/soccer.zip" -out=soccer.dev.tfplan`, review, then `task infra:apply` once approved. For production, put `prod` in place of each `dev` in that plan command and apply with `task infra:apply ENV=prod`; without `ENV=prod` the apply looks for dev's plan file. The site stops answering `/soccer` at once; its own resources are untouched.
 
 ## Cost
 
