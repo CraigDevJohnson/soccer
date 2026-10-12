@@ -47,7 +47,7 @@ type Calendar struct {
 // that fetches a Session link again updates games instead of duplicating them.
 func Write(c Calendar, stamp time.Time) (string, error) {
 	loc := league.Mountain
-	cal := ics.NewCalendarFor("craigdevjohnson.com Schedule Downloader")
+	cal := ics.NewCalendarFor("craigdevjohnson.com Let's Plan Soccer")
 	cal.SetMethod(ics.MethodPublish)
 	cal.SetCalscale("GREGORIAN")
 	if c.Name != "" {

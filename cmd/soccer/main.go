@@ -1,4 +1,4 @@
-// The Schedule Downloader backend. On Lambda it serves through the Function
+// The Let's Plan Soccer backend. On Lambda it serves through the Function
 // URL adapter (payload format 2.0, the same shape API Gateway's HTTP API
 // sends); anywhere else it listens on a local port.
 package main

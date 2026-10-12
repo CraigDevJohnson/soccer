@@ -1,6 +1,8 @@
 # soccer
 
-The Schedule Downloader's backend: it puts a Let's Play Soccer Team's games into a calendar. It is unofficial and not affiliated with Let's Play Soccer.
+**Let's Plan Soccer.** Link. Plan. Score
+
+The Let's Plan Soccer backend: it puts a Let's Play Soccer Team's games into a calendar. It is unofficial and not affiliated with Let's Play Soccer.
 
 This is one Tool behind [The Lobby](https://github.com/CraigDevJohnson/the-lobby), which owns every screen and sign-in (ADR 0001 there). The site calls this backend with signed requests to its Lambda address, and nothing else can reach it (ADR 0006). It is a Go/Chi server that runs on AWS Lambda through an adapter and as an ordinary server on a developer's computer (ADR 0002). The league client and the .ics writer come from the archived [soccer_scraper](https://github.com/CraigDevJohnson/soccer_scraper). Left behind on purpose: its email change alerts and DynamoDB, and its "Special Event" title for one Team, since event wording is deferred in the baseline. The league's schedule service is undocumented. The client reads the shape seen live on 2026-10-10 (`GET /teams/{id}`: a `team` object with its division, `games` with `UGameID`, the division `standings`), still accepts soccer_scraper's older `game_id`, accepts numbers or strings where the league might change its mind, and treats any answer it cannot read as the league being unavailable, never as a Team being gone. A Team ID belongs to one season; the same people get a new one when they sign up again.
 

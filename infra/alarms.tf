@@ -19,7 +19,7 @@ resource "aws_cloudwatch_log_metric_filter" "league_unavailable" {
 
 resource "aws_cloudwatch_metric_alarm" "league_unavailable" {
   alarm_name          = "${local.name}-league-unavailable"
-  alarm_description   = "The league's schedule service failed a Schedule Downloader request, so downloads and Session links are answering 503. See docs/operations/deploy.md."
+  alarm_description   = "The league's schedule service failed a Let's Plan Soccer request, so downloads and Session links are answering 503. See docs/operations/deploy.md."
   namespace           = aws_cloudwatch_log_metric_filter.league_unavailable.metric_transformation[0].namespace
   metric_name         = aws_cloudwatch_log_metric_filter.league_unavailable.metric_transformation[0].name
   statistic           = "Sum"
@@ -36,7 +36,7 @@ resource "aws_cloudwatch_metric_alarm" "league_unavailable" {
 # failure itself, as a 5xx the site relays.
 resource "aws_cloudwatch_metric_alarm" "failing" {
   alarm_name          = "${local.name}-failing"
-  alarm_description   = "The Schedule Downloader backend crashed or timed out. See docs/operations/deploy.md."
+  alarm_description   = "The Let's Plan Soccer backend crashed or timed out. See docs/operations/deploy.md."
   namespace           = "AWS/Lambda"
   metric_name         = "Errors"
   dimensions          = { FunctionName = aws_lambda_function.server.function_name }
