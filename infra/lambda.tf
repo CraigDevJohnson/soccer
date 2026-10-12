@@ -53,7 +53,7 @@ resource "aws_iam_role_policy" "server" {
 
 resource "aws_lambda_function" "server" {
   function_name = local.name
-  description   = "The Schedule Downloader's backend for The Lobby (${var.site_environment})."
+  description   = "The Let's Plan Soccer backend for The Lobby (${var.site_environment})."
   role          = aws_iam_role.server.arn
 
   filename         = var.package_path

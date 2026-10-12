@@ -1,6 +1,6 @@
 # Deploying the backend
 
-The Schedule Downloader page (`/soccer` in [the-lobby](https://github.com/CraigDevJohnson/the-lobby)) calls this backend through a Lambda Function URL that accepts only the site's own role, with requests the site signs (the-lobby ADR 0006). `infra/` is the OpenTofu for one such deployment, and there is one deployment per site environment (dev, and production), chosen with `ENV` on the `task infra:*` commands (default `dev`). Each is named for the site environment it serves, `soccer-<site_environment>-server`, because the site's permissions boundary lets its role call only backends named `*-<environment>-*`, and each has its own state, private inputs and plan file. Nothing here is public: there is no API Gateway, no custom domain and no unsigned path in.
+The Let's Plan Soccer page (`/soccer` in [the-lobby](https://github.com/CraigDevJohnson/the-lobby)) calls this backend through a Lambda Function URL that accepts only the site's own role, with requests the site signs (the-lobby ADR 0006). `infra/` is the OpenTofu for one such deployment, and there is one deployment per site environment (dev, and production), chosen with `ENV` on the `task infra:*` commands (default `dev`). Each is named for the site environment it serves, `soccer-<site_environment>-server`, because the site's permissions boundary lets its role call only backends named `*-<environment>-*`, and each has its own state, private inputs and plan file. Nothing here is public: there is no API Gateway, no custom domain and no unsigned path in.
 
 ## What it creates
 

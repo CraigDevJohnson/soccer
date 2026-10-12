@@ -1,4 +1,4 @@
-// Package api is the Schedule Downloader's HTTP interface. Only the site calls
+// Package api is the Let's Plan Soccer HTTP interface. Only the site calls
 // it, with signed requests (ADR 0006); the site turns its answers into screens
 // and serves Session links to calendar apps.
 package api
