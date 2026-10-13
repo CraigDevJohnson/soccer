@@ -14,10 +14,12 @@ import (
 )
 
 // sampleTeam is the league's live shape (2026-10-10), trimmed: game IDs are
-// "UGameID" and times carry milliseconds.
+// "UGameID" and times carry milliseconds. Season is the league's season
+// number, as the Team list has it (173 for Team 489634, read live on
+// 2026-10-13), not a year.
 const sampleTeam = `{
   "team": {"UTeamID": 123456, "team_name": "ROVERS", "division_name": "Coed Over 30 B Sun", "div_code": "CO30BSun",
-           "Dropped": false, "UCoachID": 900001, "UDivSeasonID": 110046, "Season": 2026, "facility_name": "Boise", "FacilityID": 4},
+           "Dropped": false, "UCoachID": 900001, "UDivSeasonID": 110046, "Season": 173, "facility_name": "Boise", "FacilityID": 4},
   "games": [
     {"UGameID": 2988396, "SchedGameDateTime": "2026-10-14T19:15:00.000Z", "schedGameEndTime": null, "field_name": "Field 3", "Field": 3,
      "result": null, "FacilityID": 4, "UTeam1": 123456, "UTeam2": 222222,
@@ -31,7 +33,7 @@ const sampleTeam = `{
     {"UGameID": 3, "SchedGameDateTime": "2026-10-28T20:00:00Z", "Field": 1,
      "home_team": {"team_name": ""}, "visitor_team": {"team_name": "B"}}
   ],
-  "standings": [{"Season": 2026, "TeamName": "ROVERS", "UTeamID": 123456, "UDivSeasonID": 110046, "position": 1}],
+  "standings": [{"Season": 173, "TeamName": "ROVERS", "UTeamID": 123456, "UDivSeasonID": 110046, "position": 1}],
   "roster": null
 }`
 
@@ -56,7 +58,7 @@ func TestTeamParsesGamesInMountainTime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if team.ID != "123456" || team.Name != "ROVERS" || team.Season != "2026" {
+	if team.ID != "123456" || team.Name != "ROVERS" || team.Season != "173" {
 		t.Fatalf("team = %+v", team)
 	}
 	if d := team.Division; d.ID != "110046" || d.Name != "Coed Over 30 B Sun" || d.Code != "CO30BSun" {
@@ -166,7 +168,7 @@ func TestTeamFacility(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c, _ := serve(t, http.StatusOK, `{"team": {`+tt.facility+` "team_name": "ROVERS", "Season": 2026}, "games": []}`)
+			c, _ := serve(t, http.StatusOK, `{"team": {`+tt.facility+` "team_name": "ROVERS", "Season": 173}, "games": []}`)
 			team, err := c.Team(context.Background(), "123456")
 			if !errors.Is(err, tt.want) {
 				t.Fatalf("err = %v, want %v", err, tt.want)

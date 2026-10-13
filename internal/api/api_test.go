@@ -39,12 +39,12 @@ func (f fakeTeams) Team(_ context.Context, id string) (league.Team, error) {
 	}
 	switch id {
 	case "111111":
-		return league.Team{ID: id, Name: "ROVERS", Season: "2026", CoachID: "900001", Games: []league.Game{
+		return league.Team{ID: id, Name: "ROVERS", Season: "173", CoachID: "900001", Games: []league.Game{
 			{ID: "g1", Start: at(7, 19), Field: "1", Home: "ROVERS", Away: "BANDITS"},
 			{ID: "g3", Start: at(14, 19), Field: "2", Home: "ROVERS", Away: "KICKERS"},
 		}}, nil
 	case "222222":
-		return league.Team{ID: id, Name: "KICKERS", Season: "2026", Games: []league.Game{
+		return league.Team{ID: id, Name: "KICKERS", Season: "173", Games: []league.Game{
 			{ID: "g3", Start: at(14, 19), Field: "2", Home: "ROVERS", Away: "KICKERS"},
 			{ID: "g2", Start: at(14, 18), Field: "4", Home: "KICKERS", Away: "OWLS"},
 		}}, nil
@@ -486,7 +486,7 @@ func TestNextSession(t *testing.T) {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
 	}
 	// The shape the site reads. No coach id is in it.
-	want := `{"team":{"id":"111111","name":"ROVERS","division":{"id":"","name":"","season":"2026"},"season":"2026"},` +
+	want := `{"team":{"id":"111111","name":"ROVERS","division":{"id":"","name":"","season":"173"},"season":"173"},` +
 		`"match":"follow",` +
 		`"teams":[{"id":"311111","name":"ROVERS","division":{"id":"d2","name":"Coed Open","season":"2027"},"season":"2027","same_coach":true}],` +
 		`"similar":[]}`
