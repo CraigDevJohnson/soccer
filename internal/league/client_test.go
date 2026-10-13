@@ -2,9 +2,13 @@ package league
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -36,7 +40,7 @@ func serve(t *testing.T, status int, body string) (*Client, *int) {
 	calls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		if r.URL.Path != "/teams/123456" && r.URL.Path != "/games" {
+		if r.URL.Path != "/teams/123456" {
 			t.Errorf("path = %q", r.URL.Path)
 		}
 		w.WriteHeader(status)
@@ -228,73 +232,218 @@ func TestTeamAcceptsNumbersOrStrings(t *testing.T) {
 	}
 }
 
-// sampleDay is the league's day schedule (2026-10-10), trimmed: a map of
-// field number to slots, each a game or free time.
-const sampleDay = `{
-  "1": [
-    {"game": {"UGameID": 3092837, "field_name": "Field 1", "SchedGameDateTime": "2026-10-11T08:20:00.000Z", "Field": 1, "FacilityID": 4,
-              "home_team": {"UTeamID": 489605, "team_name": "HUFF N PUFF", "division_name": "Coed 8 Sun", "div_code": "C8Sun", "Dropped": false, "UDivSeasonID": 114434, "Season": 173},
-              "visitor_team": {"UTeamID": 490345, "team_name": "NO BALLZ ALL BALLERZ", "division_name": "Coed 8 Sun", "div_code": "C8Sun", "Dropped": false, "UDivSeasonID": 114434, "Season": 173}},
-     "time_to_order": "2026-10-11T08:20:00.000Z", "division": "C8Sun", "field": 1, "duration": 45, "end": "2026-10-11T09:05:00.000Z"},
-    {"blank_space": null, "start": "2026-10-11T20:20:00.000Z", "end": "2026-10-11T23:59:00.000Z", "field": 1, "duration": 219.0}
-  ],
-  "2": [
-    {"game": {"UGameID": 3092840, "field_name": "Field 2", "SchedGameDateTime": "2026-10-11T08:20:00.000Z", "Field": 2,
-              "home_team": {"UTeamID": 490100, "team_name": "SQUAD", "division_name": "Coed 5 Sun", "div_code": "C5Sun", "UDivSeasonID": 114515, "Season": 173},
-              "visitor_team": {"UTeamID": 490101, "team_name": "ITS TOO EZ", "division_name": "Coed 5 Sun", "div_code": "C5Sun", "UDivSeasonID": 114515, "Season": 173}},
-     "duration": 45}
-  ]
-}`
+// sampleList is the league's Team list in its live shape (2026-10-13), with
+// made-up Teams: an array of rows, ids mostly numbers, a name padded with
+// spaces, a Team that dropped out and one at another Facility.
+const sampleList = `[
+  {"UTeamID": 111111, "team_name": "ROVERS", "division_name": "Coed Open Sun", "div_code": "COSun", "Dropped": false,
+   "UCoachID": 900001, "UAltID": null, "UDivSeasonID": 110001, "Season": 173, "role_result": null, "facility_name": "Boise",
+   "team_action": null, "player_that_belongs": null, "FacilityID": 4, "Color": "RED"},
+  {"UTeamID": "222222", "team_name": " Kickers  ", "division_name": "Coed Open Sun", "div_code": "COSun", "Dropped": false,
+   "UCoachID": "900002", "UDivSeasonID": "110001", "Season": "173", "FacilityID": "4", "Color": null},
+  {"UTeamID": 333333, "team_name": "ROVERS", "division_name": "Coed Open Sun", "div_code": "COSun",
+   "UCoachID": 900001, "UDivSeasonID": 110002, "Season": 175},
+  {"UTeamID": 444444, "team_name": "QUITTERS", "division_name": "Coed Open Sun", "div_code": "COSun", "Dropped": true,
+   "UCoachID": 900003, "UDivSeasonID": 110001, "Season": 173, "FacilityID": 4},
+  {"UTeamID": 555555, "team_name": "VISITORS", "division_name": "Mens Open Tues", "div_code": "MOTues", "Dropped": false,
+   "UCoachID": 900004, "UDivSeasonID": 120001, "Season": 173, "FacilityID": 7},
+  {"UTeamID": 666666, "team_name": "  ", "UDivSeasonID": 110001, "Season": 173, "FacilityID": 4}
+]`
 
-func TestDayGames(t *testing.T) {
-	var gotQuery string
+// serveList answers every Team list search with answer(name) and records
+// each request's query. The league must never get a cookie or a sign-in.
+func serveList(t *testing.T, answer func(name string) (int, string)) (*Client, func() []string) {
+	t.Helper()
+	var mu sync.Mutex
+	var queries []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotQuery = r.URL.RawQuery
-		_, _ = w.Write([]byte(sampleDay))
+		if r.Method != http.MethodGet || r.URL.Path != "/teams/search_teams" {
+			t.Errorf("%s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Cookie") != "" || r.Header.Get("Authorization") != "" {
+			t.Errorf("credentials sent to the league")
+		}
+		mu.Lock()
+		queries = append(queries, r.URL.RawQuery)
+		mu.Unlock()
+		status, body := answer(r.URL.Query().Get("name"))
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
 	}))
 	t.Cleanup(srv.Close)
-	c := NewClient(srv.URL)
-	// 2026-10-11 00:30 in Denver is still 2026-10-11 there, though 06:30Z.
-	games, err := c.DayGames(context.Background(), time.Date(2026, 10, 11, 0, 30, 0, 0, Mountain).UTC())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if gotQuery != "date=2026-10-11&facility_id=4" {
-		t.Fatalf("query = %q", gotQuery)
-	}
-	if len(games) != 2 {
-		t.Fatalf("got %d games: %+v", len(games), games)
-	}
-	g := games[0]
-	if g.ID != "3092837" || g.Field != "1" || !g.Start.Equal(time.Date(2026, 10, 11, 8, 20, 0, 0, Mountain)) {
-		t.Fatalf("game 0 = %+v", g)
-	}
-	if g.Home.ID != "489605" || g.Home.Name != "HUFF N PUFF" || g.Home.Division != (Division{ID: "114434", Name: "Coed 8 Sun", Code: "C8Sun"}) {
-		t.Fatalf("home = %+v", g.Home)
-	}
-	if g.Away.ID != "490345" || games[1].Field != "2" || games[1].Away.Name != "ITS TOO EZ" {
-		t.Fatalf("games = %+v", games)
+	return NewClient(srv.URL), func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Clone(queries)
 	}
 }
 
-func TestDayGamesErrors(t *testing.T) {
-	for name, tc := range map[string]struct {
-		status int
-		body   string
+func TestTeamListReadsTheLeaguesList(t *testing.T) {
+	c, queries := serveList(t, func(string) (int, string) { return http.StatusOK, sampleList })
+	teams, err := c.TeamList(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The wildcard, escaped as the league's own site sends it, in one request.
+	if got := queries(); len(got) != 1 || got[0] != "name=%25&facility_id=4" {
+		t.Fatalf("queries = %q", got)
+	}
+	open := Division{ID: "110001", Name: "Coed Open Sun", Code: "COSun", Season: "173"}
+	want := []Listed{
+		{TeamSummary: TeamSummary{ID: "111111", Name: "ROVERS", Division: open, Season: "173"}, CoachID: "900001"},
+		{TeamSummary: TeamSummary{ID: "222222", Name: "Kickers", Division: open, Season: "173"}, CoachID: "900002"},
+		// No FacilityID is not proof of another Facility.
+		{TeamSummary: TeamSummary{ID: "333333", Name: "ROVERS", Division: Division{ID: "110002", Name: "Coed Open Sun", Code: "COSun", Season: "175"}, Season: "175"}, CoachID: "900001"},
+	}
+	if !slices.Equal(teams, want) {
+		t.Fatalf("teams =\n%+v\nwant\n%+v", teams, want)
+	}
+	// The coach id is for comparing Teams, never for an answer.
+	b, err := json.Marshal(teams)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "900001") || strings.Contains(strings.ToLower(string(b)), "coach") {
+		t.Fatalf("coach id serialised: %s", b)
+	}
+}
+
+func TestTeamListAtAnotherFacility(t *testing.T) {
+	c, queries := serveList(t, func(string) (int, string) { return http.StatusOK, sampleList })
+	c.FacilityID = "7"
+	teams, err := c.TeamList(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := queries(); len(got) != 1 || got[0] != "name=%25&facility_id=7" {
+		t.Fatalf("queries = %q", got)
+	}
+	var ids []string
+	for _, l := range teams {
+		ids = append(ids, l.ID)
+	}
+	if !slices.Equal(ids, []string{"333333", "555555"}) {
+		t.Fatalf("Team IDs = %v, want the Facility's Team and the one with no FacilityID", ids)
+	}
+}
+
+// If the wildcard ever stops working, name=% answers [] and the list is
+// read as one search per first letter or digit instead.
+func TestTeamListFallsBackToPrefixSearches(t *testing.T) {
+	var mu sync.Mutex
+	inFlight, most := 0, 0
+	c, queries := serveList(t, func(name string) (int, string) {
+		mu.Lock()
+		inFlight++
+		most = max(most, inFlight)
+		mu.Unlock()
+		time.Sleep(2 * time.Millisecond)
+		mu.Lock()
+		inFlight--
+		mu.Unlock()
+		switch name {
+		case "K":
+			return http.StatusOK, `[{"UTeamID": 222222, "team_name": "KICKERS", "UDivSeasonID": 110001, "Season": 173, "FacilityID": 4}]`
+		case "R":
+			return http.StatusOK, `[{"UTeamID": 111111, "team_name": "ROVERS", "UDivSeasonID": 110001, "Season": 173, "FacilityID": 4},
+			  {"UTeamID": 333333, "team_name": "ROVERS", "UDivSeasonID": 110002, "Season": 175, "FacilityID": 4}]`
+		case "7":
+			// A Team listed twice is kept once.
+			return http.StatusOK, `[{"UTeamID": 111111, "team_name": "ROVERS", "UDivSeasonID": 110001, "Season": 173, "FacilityID": 4}]`
+		}
+		return http.StatusOK, `[]`
+	})
+	teams, err := c.TeamList(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, l := range teams {
+		ids = append(ids, l.ID)
+	}
+	if !slices.Equal(ids, []string{"222222", "111111", "333333"}) {
+		t.Fatalf("Team IDs = %v", ids)
+	}
+
+	got := queries()
+	if len(got) != 1+len(sweepPrefixes) || got[0] != "name=%25&facility_id=4" {
+		t.Fatalf("queries = %q", got)
+	}
+	var want []string
+	for _, p := range sweepPrefixes {
+		want = append(want, "name="+string(p)+"&facility_id=4")
+	}
+	sweep := slices.Sorted(slices.Values(got[1:]))
+	if !slices.Equal(sweep, slices.Sorted(slices.Values(want))) {
+		t.Fatalf("sweep queries = %q", sweep)
+	}
+	if most > 4 {
+		t.Fatalf("%d searches at once, want at most 4", most)
+	}
+}
+
+func TestTeamListWithNoTeamsAnywhereIsEmpty(t *testing.T) {
+	c, queries := serveList(t, func(string) (int, string) { return http.StatusOK, `[]` })
+	teams, err := c.TeamList(context.Background())
+	if err != nil || teams == nil || len(teams) != 0 {
+		t.Fatalf("teams = %#v, err = %v, want an empty list", teams, err)
+	}
+	if n := len(queries()); n != 1+len(sweepPrefixes) {
+		t.Fatalf("%d queries, want the wildcard and the sweep", n)
+	}
+}
+
+func TestTeamListErrors(t *testing.T) {
+	tests := []struct {
+		name   string
+		answer func(name string) (int, string)
 	}{
-		"facility unknown": {http.StatusNotFound, `{"message":"the facility doesn't exists"}`},
-		"maintenance":      {http.StatusOK, `<html>`},
-		"unreadable time":  {http.StatusOK, `{"1":[{"game":{"UGameID":1,"SchedGameDateTime":"soon","home_team":{"UTeamID":1,"team_name":"A","division_name":"D","UDivSeasonID":9},"visitor_team":{"UTeamID":2,"team_name":"B","division_name":"D","UDivSeasonID":9}}}]}`},
-		"no division":      {http.StatusOK, `{"1":[{"game":{"UGameID":1,"SchedGameDateTime":"2026-10-11T08:20:00.000Z","home_team":{"UTeamID":1,"team_name":"A","division_name":"D","UDivSeasonID":9},"visitor_team":{"UTeamID":2,"team_name":"B"}}}]}`},
-	} {
-		c, _ := serve(t, tc.status, tc.body)
-		if _, err := c.DayGames(context.Background(), time.Now()); !errors.Is(err, ErrUnavailable) {
-			t.Errorf("%s: err = %v, want ErrUnavailable", name, err)
+		{"server error", func(string) (int, string) { return http.StatusBadGateway, `` }},
+		{"unknown route", func(string) (int, string) { return http.StatusNotFound, `{"status":404,"error":"Not Found"}` }},
+		{"rate limited", func(string) (int, string) { return http.StatusTooManyRequests, `` }},
+		{"maintenance page", func(string) (int, string) { return http.StatusOK, `<html>` }},
+		{"not a list", func(string) (int, string) { return http.StatusOK, `{"message":"maintenance"}` }},
+		{"unreadable row", func(string) (int, string) { return http.StatusOK, `[{"UTeamID": 111111, "Dropped": "no"}]` }},
+		// A sweep missing a letter would hide those Teams for an hour.
+		{"sweep fails for one letter", func(name string) (int, string) {
+			if name == "Q" {
+				return http.StatusServiceUnavailable, ``
+			}
+			return http.StatusOK, `[]`
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, _ := serveList(t, tt.answer)
+			if _, err := c.TeamList(context.Background()); !errors.Is(err, ErrUnavailable) {
+				t.Fatalf("err = %v, want ErrUnavailable", err)
+			}
+		})
+	}
+
+	c, _ := serveList(t, func(string) (int, string) { return http.StatusOK, sampleList })
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := c.TeamList(ctx); !errors.Is(err, context.Canceled) || errors.Is(err, ErrUnavailable) {
+		t.Fatalf("canceled: err = %v", err)
+	}
+}
+
+// Whatever a person types is searched in memory. "%", "_" and "[ ]" are
+// wildcards to the league, so only the fixed Team list search reaches it.
+func TestSearchNeverSendsTypedText(t *testing.T) {
+	c, queries := serveList(t, func(string) (int, string) { return http.StatusOK, sampleList })
+	d := NewSearchDirectory(c, nil)
+	for _, q := range []string{"%", "_", "[a-z]", "ro%", "k_ckers"} {
+		got, err := d.SearchTeams(context.Background(), q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 0 {
+			t.Errorf("search %q = %+v, want no Teams: no name holds it", q, got)
 		}
 	}
-	c, _ := serve(t, http.StatusOK, `{"1":[{"blank_space":null,"field":1}],"2":[]}`)
-	games, err := c.DayGames(context.Background(), time.Now())
-	if err != nil || len(games) != 0 {
-		t.Fatalf("free day: %v %v", games, err)
+	if got := queries(); len(got) != 1 || got[0] != "name=%25&facility_id=4" {
+		t.Fatalf("queries = %q", got)
 	}
 }

@@ -8,9 +8,10 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"sort"
 	"strings"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -20,7 +21,7 @@ const (
 	DefaultFacilityID = "4"
 )
 
-// Client reads Teams and day schedules from the league's schedule service.
+// Client reads Teams and the Team list from the league's schedule service.
 type Client struct {
 	BaseURL    string
 	FacilityID string
@@ -216,93 +217,130 @@ func (c *Client) get(ctx context.Context, path string) (*http.Response, error) {
 	return resp, nil
 }
 
-// dayTeam is a Team as the day schedule names it on each game.
-type dayTeam struct {
+// listedTeam is one row of the league's Team list, GET
+// /teams/search_teams, as seen live on 2026-10-13. The row carries more
+// (facility_name, Color, UAltID and fields for a signed-in player), which is
+// not read.
+type listedTeam struct {
 	UTeamID      flexString `json:"UTeamID"`
 	TeamName     string     `json:"team_name"`
 	DivisionName string     `json:"division_name"`
 	DivCode      string     `json:"div_code"`
 	UDivSeasonID flexString `json:"UDivSeasonID"`
+	Season       flexString `json:"Season"`
+	UCoachID     flexString `json:"UCoachID"`
+	FacilityID   flexString `json:"FacilityID"`
+	Dropped      bool       `json:"Dropped"`
 }
 
-func (t dayTeam) summary() TeamSummary {
-	return TeamSummary{
-		ID:       string(t.UTeamID),
-		Name:     t.TeamName,
-		Division: Division{ID: string(t.UDivSeasonID), Name: t.DivisionName, Code: t.DivCode},
+// sweepPrefixes are the searches TeamList falls back to when the wildcard
+// answers nothing, one per first letter or digit of a Team name.
+const sweepPrefixes = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+// TeamList lists every Team at the Facility in the current Session and the
+// next, from the league's team search. That search's name is a
+// case-insensitive prefix match in which "%" is a wildcard, so name=% lists
+// them all without a league account. Ended Sessions are not listed. Teams
+// that dropped out and Teams at another Facility are left out, and names
+// are trimmed.
+//
+// Only the fixed searches here are ever sent: "%", "_" and "[ ]" are
+// wildcards to the league, so text a person typed must never reach it.
+func (c *Client) TeamList(ctx context.Context) ([]Listed, error) {
+	rows, err := c.searchTeams(ctx, "%")
+	if err != nil {
+		return nil, err
 	}
+	if len(rows) == 0 {
+		// The wildcard stopped working, or the Facility has no Teams. One
+		// search per first letter or digit tells the two apart; a name
+		// starting with anything else is missed until the wildcard is back.
+		if rows, err = c.sweep(ctx); err != nil {
+			return nil, err
+		}
+	}
+	teams := []Listed{}
+	for _, r := range rows {
+		if r.Dropped {
+			continue
+		}
+		if f := strings.TrimSpace(string(r.FacilityID)); f != "" && f != c.FacilityID {
+			continue
+		}
+		id, name := strings.TrimSpace(string(r.UTeamID)), strings.TrimSpace(r.TeamName)
+		if id == "" || name == "" {
+			continue
+		}
+		season := strings.TrimSpace(string(r.Season))
+		if season == "0" {
+			season = ""
+		}
+		teams = append(teams, Listed{
+			TeamSummary: TeamSummary{
+				ID:   id,
+				Name: name,
+				Division: Division{
+					ID:     strings.TrimSpace(string(r.UDivSeasonID)),
+					Name:   strings.TrimSpace(r.DivisionName),
+					Code:   strings.TrimSpace(r.DivCode),
+					Season: season,
+				},
+				Season: season,
+			},
+			CoachID: strings.TrimSpace(string(r.UCoachID)),
+		})
+	}
+	return teams, nil
 }
 
-// daySlot is one entry of the league's day schedule, GET
-// /games?facility_id={id}&date={date}: a map of field number to slots, each
-// slot a game or free time.
-type daySlot struct {
-	Game *struct {
-		UGameID           flexString `json:"UGameID"`
-		SchedGameDateTime string     `json:"SchedGameDateTime"`
-		FieldName         string     `json:"field_name"`
-		Field             flexString `json:"Field"`
-		HomeTeam          dayTeam    `json:"home_team"`
-		VisitorTeam       dayTeam    `json:"visitor_team"`
-	} `json:"game"`
+// sweep runs one search per sweepPrefixes letter or digit and keeps each
+// Team once. Any search failing fails the sweep: a list missing a letter
+// would hide those Teams for an hour.
+func (c *Client) sweep(ctx context.Context) ([]listedTeam, error) {
+	found := make([][]listedTeam, len(sweepPrefixes))
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(4)
+	for i, p := range sweepPrefixes {
+		g.Go(func() error {
+			rows, err := c.searchTeams(gctx, string(p))
+			found[i] = rows
+			return err
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	var rows []listedTeam
+	for _, rs := range found {
+		for _, r := range rs {
+			id := strings.TrimSpace(string(r.UTeamID))
+			if seen[id] {
+				continue
+			}
+			seen[id] = true
+			rows = append(rows, r)
+		}
+	}
+	return rows, nil
 }
 
-// DayGames lists every game at the Facility on date (a Mountain-time day).
-// A day with no games is an empty list; the league answering anything this
-// code cannot read is ErrUnavailable.
-func (c *Client) DayGames(ctx context.Context, date time.Time) ([]DayGame, error) {
-	day := date.In(Mountain).Format("2006-01-02")
-	q := url.Values{"facility_id": {c.FacilityID}, "date": {day}}
-	resp, err := c.get(ctx, "/games?"+q.Encode())
+// searchTeams makes one Team list search for names starting with prefix.
+// An answer this code cannot read is ErrUnavailable; an empty array is not.
+func (c *Client) searchTeams(ctx context.Context, prefix string) ([]listedTeam, error) {
+	resp, err := c.get(ctx, "/teams/search_teams?name="+url.QueryEscape(prefix)+"&facility_id="+url.QueryEscape(c.FacilityID))
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%w: day %s: status %d", ErrUnavailable, day, resp.StatusCode)
+		return nil, fmt.Errorf("%w: team list %q: status %d", ErrUnavailable, prefix, resp.StatusCode)
 	}
-	var fields map[string][]daySlot
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&fields); err != nil {
-		return nil, fmt.Errorf("%w: decoding day %s: %v", ErrUnavailable, day, err)
+	var rows []listedTeam
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&rows); err != nil {
+		return nil, fmt.Errorf("%w: decoding team list %q: %v", ErrUnavailable, prefix, err)
 	}
-	games := []DayGame{}
-	for _, slots := range fields {
-		for _, s := range slots {
-			g := s.Game
-			if g == nil {
-				continue
-			}
-			home, away := g.HomeTeam.summary(), g.VisitorTeam.summary()
-			if g.SchedGameDateTime == "" || home.ID == "" || home.Name == "" || away.ID == "" || away.Name == "" {
-				continue
-			}
-			// The day schedule is what the division list is built from, so
-			// a game whose Teams carry no division is a changed shape, not a
-			// game to leave out: listing it would hide Teams from their
-			// division for an hour.
-			for _, t := range []TeamSummary{home, away} {
-				if t.Division.ID == "" || t.Division.Name == "" {
-					return nil, fmt.Errorf("%w: day %s game %q: team %s has no division", ErrUnavailable, day, string(g.UGameID), t.ID)
-				}
-			}
-			start, err := ParseLeagueTime(g.SchedGameDateTime)
-			if err != nil {
-				return nil, fmt.Errorf("%w: day %s game %q: %v", ErrUnavailable, day, string(g.UGameID), err)
-			}
-			field := strings.TrimPrefix(g.FieldName, "Field ")
-			if field == "" {
-				field = string(g.Field)
-			}
-			games = append(games, DayGame{ID: string(g.UGameID), Start: start, Field: field, Home: home, Away: away})
-		}
-	}
-	sort.Slice(games, func(i, j int) bool {
-		if !games[i].Start.Equal(games[j].Start) {
-			return games[i].Start.Before(games[j].Start)
-		}
-		return games[i].Field < games[j].Field
-	})
-	return games, nil
+	return rows, nil
 }
 
 // ParseLeagueTime reads a league timestamp as Mountain wall-clock time. The

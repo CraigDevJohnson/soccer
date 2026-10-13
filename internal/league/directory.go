@@ -1,58 +1,55 @@
 package league
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"log/slog"
-	"sort"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
-
-	"golang.org/x/sync/errgroup"
 )
 
 const (
-	// ScanDays is how many days of the Facility's schedule the Directory
-	// reads: a week, since every division plays weekly.
-	ScanDays = 7
-	// ScanTTL is how long one scan serves before the next.
-	ScanTTL = time.Hour
+	// ListTTL is how long one Team list serves before the next is read.
+	ListTTL = time.Hour
 	// MaxSearchResults caps a name search.
 	MaxSearchResults = 50
 )
 
-// ScanDirectory is the Directory built from the league's public day
-// schedule, since its own team search needs a league account and it has no
-// public division list. Reading the coming week lists every division
-// playing and every Team in it; a Team with no game in that week is not
-// listed. One scan is kept in memory for ScanTTL and served to everyone.
-type ScanDirectory struct {
-	Days Days
+// SearchDirectory is the Directory built from the league's Team list, which
+// holds every Team at the Facility in the current Session and the next. One
+// list is kept in memory for ListTTL and served to everyone; searches run
+// over it, so nothing a person types is sent to the league.
+type SearchDirectory struct {
+	Lists TeamLists
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
-	// Log, when set, gets a line when a refresh fails and the last scan is
+	// Log, when set, gets a line when a refresh fails and the last list is
 	// served instead.
 	Log *slog.Logger
 
-	mu      sync.Mutex
-	index   *index
-	scanned time.Time
+	mu     sync.Mutex
+	index  *index
+	listed time.Time
 }
 
-// NewScanDirectory returns a Directory over days.
-func NewScanDirectory(days Days, log *slog.Logger) *ScanDirectory {
-	return &ScanDirectory{Days: days, Log: log}
+// NewSearchDirectory returns a Directory over lists.
+func NewSearchDirectory(lists TeamLists, log *slog.Logger) *SearchDirectory {
+	return &SearchDirectory{Lists: lists, Log: log}
 }
 
-// index is one scan, read-only once built.
+// index is one Team list, read-only once built.
 type index struct {
-	divisions []Division               // sorted by name
-	teams     []TeamSummary            // sorted by name
-	byDiv     map[string][]TeamSummary // division ID -> Teams, sorted by name
+	listed    []Listed                 // as the league listed them
+	divisions []Division               // sorted by Season, then name
+	teams     []TeamSummary            // sorted by name, then Season, then Team ID
+	byDiv     map[string][]TeamSummary // division ID -> Teams, sorted the same
 }
 
-func (d *ScanDirectory) SearchTeams(ctx context.Context, query string) ([]TeamSummary, error) {
+func (d *SearchDirectory) SearchTeams(ctx context.Context, query string) ([]TeamSummary, error) {
 	idx, err := d.current(ctx)
 	if err != nil {
 		return nil, err
@@ -70,7 +67,7 @@ func (d *ScanDirectory) SearchTeams(ctx context.Context, query string) ([]TeamSu
 	return out, nil
 }
 
-func (d *ScanDirectory) Divisions(ctx context.Context) ([]Division, error) {
+func (d *SearchDirectory) Divisions(ctx context.Context) ([]Division, error) {
 	idx, err := d.current(ctx)
 	if err != nil {
 		return nil, err
@@ -78,7 +75,7 @@ func (d *ScanDirectory) Divisions(ctx context.Context) ([]Division, error) {
 	return idx.divisions, nil
 }
 
-func (d *ScanDirectory) DivisionTeams(ctx context.Context, divisionID string) ([]TeamSummary, error) {
+func (d *SearchDirectory) DivisionTeams(ctx context.Context, divisionID string) ([]TeamSummary, error) {
 	idx, err := d.current(ctx)
 	if err != nil {
 		return nil, err
@@ -86,87 +83,91 @@ func (d *ScanDirectory) DivisionTeams(ctx context.Context, divisionID string) ([
 	return idx.byDiv[strings.TrimSpace(divisionID)], nil
 }
 
-// current returns the scan on hand, refreshing it when it is older than
-// ScanTTL. When a refresh fails, the last scan still serves: a week-old
+// Listed returns the whole Team list, coach ids included, for finding a
+// Team's next Session. It is shared: callers must not change it.
+func (d *SearchDirectory) Listed(ctx context.Context) ([]Listed, error) {
+	idx, err := d.current(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return idx.listed, nil
+}
+
+// current returns the list on hand, refreshing it when it is older than
+// ListTTL. When a refresh fails, the last list still serves: an hour-old
 // listing beats no listing, and the Team lookup itself still tells the
 // truth. Concurrent callers wait for one refresh rather than each starting
 // their own.
-func (d *ScanDirectory) current(ctx context.Context) (*index, error) {
+func (d *SearchDirectory) current(ctx context.Context) (*index, error) {
 	now := time.Now()
 	if d.Now != nil {
 		now = d.Now()
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.index != nil && now.Sub(d.scanned) < ScanTTL {
+	if d.index != nil && now.Sub(d.listed) < ListTTL {
 		return d.index, nil
 	}
-	idx, err := d.scan(ctx, now)
+	listed, err := d.Lists.TeamList(ctx)
 	if err != nil {
 		if d.index != nil && !errors.Is(err, context.Canceled) {
 			if d.Log != nil {
-				d.Log.Warn("directory_stale", "err", err, "scanned", d.scanned)
+				d.Log.Warn("directory_stale", "err", err, "listed", d.listed)
 			}
 			return d.index, nil
 		}
 		return nil, err
 	}
-	d.index, d.scanned = idx, now
-	return idx, nil
+	d.index, d.listed = build(listed), now
+	return d.index, nil
 }
 
-func (d *ScanDirectory) scan(ctx context.Context, now time.Time) (*index, error) {
-	days := make([][]DayGame, ScanDays)
-	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(4)
-	start := now.In(Mountain)
-	for i := range days {
-		date := start.AddDate(0, 0, i)
-		g.Go(func() error {
-			games, err := d.Days.DayGames(gctx, date)
-			if err != nil {
-				return err
-			}
-			days[i] = games
-			return nil
-		})
-	}
-	if err := g.Wait(); err != nil {
-		return nil, err
-	}
-
-	idx := &index{byDiv: map[string][]TeamSummary{}}
+// build indexes one Team list. A Team that dropped out is left out of the
+// search and the divisions, and a division needs an ID and a name to be
+// listed.
+func build(listed []Listed) *index {
+	idx := &index{listed: listed, byDiv: map[string][]TeamSummary{}}
 	divs := map[string]Division{}
-	teams := map[string]TeamSummary{}
-	for _, games := range days {
-		for _, game := range games {
-			for _, t := range []TeamSummary{game.Home, game.Away} {
-				if t.Division.ID != "" && t.Division.Name != "" {
-					divs[t.Division.ID] = t.Division
-				}
-				teams[t.ID] = t
+	for _, l := range listed {
+		if l.Dropped {
+			continue
+		}
+		t := l.TeamSummary
+		t.Name = strings.TrimSpace(t.Name)
+		if dv := t.Division; dv.ID != "" && dv.Name != "" {
+			if _, ok := divs[dv.ID]; !ok {
+				divs[dv.ID] = dv
+				idx.divisions = append(idx.divisions, dv)
 			}
 		}
-	}
-	for _, dv := range divs {
-		idx.divisions = append(idx.divisions, dv)
-	}
-	sort.Slice(idx.divisions, func(i, j int) bool { return idx.divisions[i].Name < idx.divisions[j].Name })
-	for _, t := range teams {
 		idx.teams = append(idx.teams, t)
 		idx.byDiv[t.Division.ID] = append(idx.byDiv[t.Division.ID], t)
 	}
-	byName := func(ts []TeamSummary) {
-		sort.Slice(ts, func(i, j int) bool {
-			if ts[i].Name != ts[j].Name {
-				return ts[i].Name < ts[j].Name
-			}
-			return ts[i].ID < ts[j].ID
-		})
+	slices.SortFunc(idx.divisions, func(a, b Division) int {
+		return cmp.Or(compareSeasons(a.Season, b.Season), strings.Compare(a.Name, b.Name), strings.Compare(a.ID, b.ID))
+	})
+	byName := func(a, b TeamSummary) int {
+		return cmp.Or(strings.Compare(a.Name, b.Name), compareSeasons(a.Season, b.Season), strings.Compare(a.ID, b.ID))
 	}
-	byName(idx.teams)
+	slices.SortFunc(idx.teams, byName)
 	for _, ts := range idx.byDiv {
-		byName(ts)
+		slices.SortFunc(ts, byName)
 	}
-	return idx, nil
+	return idx
+}
+
+// compareSeasons orders league season numbers as numbers, so Season 99
+// comes before Season 100. Anything that is not a number sorts after them.
+func compareSeasons(a, b string) int {
+	an, aerr := strconv.Atoi(a)
+	bn, berr := strconv.Atoi(b)
+	switch {
+	case aerr == nil && berr == nil:
+		return cmp.Compare(an, bn)
+	case aerr == nil:
+		return -1
+	case berr == nil:
+		return 1
+	}
+	return strings.Compare(a, b)
 }

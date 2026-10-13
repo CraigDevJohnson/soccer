@@ -25,7 +25,7 @@ func main() {
 	}
 	h := &api.Handler{
 		Teams:       client,
-		Directory:   league.NewScanDirectory(client, log),
+		Directory:   league.NewSearchDirectory(client, log),
 		LinkBaseURL: os.Getenv("LINK_BASE_URL"),
 		Log:         log,
 	}
