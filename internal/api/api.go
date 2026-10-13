@@ -20,6 +20,7 @@ import (
 	"github.com/CraigDevJohnson/soccer/internal/calendar"
 	"github.com/CraigDevJohnson/soccer/internal/league"
 	"github.com/CraigDevJohnson/soccer/internal/link"
+	"github.com/CraigDevJohnson/soccer/internal/next"
 	"github.com/CraigDevJohnson/soccer/internal/schedule"
 )
 
@@ -27,11 +28,22 @@ import (
 type Handler struct {
 	Teams     league.Teams
 	Directory league.Directory
+	// Divisions tells a Session link when a Team's Session is over; nil
+	// adds no end-of-Session notice.
+	Divisions league.DivisionSeasons
+	// Next finds the Team that carries a Team on into the next Session.
+	Next NextFinder
 	// LinkBaseURL, when set, is the public address Session link tokens are
-	// appended to, such as "https://craigdevjohnson.com/soccer/link/".
+	// appended to, such as "https://craigdevjohnson.com/soccer/link/". The
+	// end-of-Session notice links to the page above it, "/soccer".
 	LinkBaseURL string
 	Log         *slog.Logger
 	Now         func() time.Time
+}
+
+// NextFinder finds a Team's next Session, as next.Resolver does.
+type NextFinder interface {
+	Find(ctx context.Context, teamID string) (next.Result, error)
 }
 
 // Router returns the routes with logging, recovery and a request timeout.
@@ -52,6 +64,7 @@ func (h *Handler) Router() http.Handler {
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	r.Get("/teams", h.searchTeams)
 	r.Get("/teams/{teamID}", h.team)
+	r.Get("/teams/{teamID}/next", h.nextSession)
 	r.Get("/divisions", h.divisions)
 	r.Get("/divisions/{divisionID}/teams", h.divisionTeams)
 	r.Get("/schedule", h.schedule)
@@ -90,6 +103,22 @@ func (h *Handler) searchTeams(w http.ResponseWriter, r *http.Request) {
 // GET /teams/{teamID}: one Team and its games, remaining ones marked.
 func (h *Handler) team(w http.ResponseWriter, r *http.Request) {
 	h.writeSchedule(w, r, []string{chi.URLParam(r, "teamID")})
+}
+
+// GET /teams/{teamID}/next: the Team in the next Session with this Team's
+// name and coach, or the Teams for the person to choose from.
+func (h *Handler) nextSession(w http.ResponseWriter, r *http.Request) {
+	id, err := league.ValidTeamID(chi.URLParam(r, "teamID"))
+	if err != nil {
+		h.scheduleError(w, &schedule.InvalidError{Reasons: []string{err.Error()}})
+		return
+	}
+	res, err := h.Next.Find(r.Context(), id)
+	if err != nil {
+		h.leagueError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
 }
 
 // GET /schedule?team=123456&team=654321: several Teams combined.
@@ -173,7 +202,7 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	body, err := h.render(s, sel)
+	body, err := h.render(s, sel, nil)
 	if err != nil {
 		h.Log.Error("render calendar", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal", "could not build the calendar")
@@ -211,7 +240,8 @@ func (h *Handler) createLink(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /links/{token}: what a calendar app fetches. It reads the Teams afresh
-// each time, so changed times and newly posted games come through.
+// each time, so changed times and newly posted games come through, and adds
+// a notice for each Team whose Session is over.
 func (h *Handler) serveLink(w http.ResponseWriter, r *http.Request) {
 	sel, err := link.Decode(strings.TrimSuffix(chi.URLParam(r, "token"), ".ics"))
 	if err != nil {
@@ -225,7 +255,7 @@ func (h *Handler) serveLink(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	body, err := h.render(s, sel)
+	body, err := h.render(s, sel, h.sessionNotices(r.Context(), s, sel.TeamIDs))
 	if err != nil {
 		h.Log.Error("render calendar", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal", "could not build the calendar")
@@ -256,7 +286,7 @@ func (h *Handler) wholeSchedule(w http.ResponseWriter, r *http.Request, ids []st
 	return s, true
 }
 
-func (h *Handler) render(s schedule.Schedule, sel schedule.Selection) (string, error) {
+func (h *Handler) render(s schedule.Schedule, sel schedule.Selection, notices []calendar.Notice) (string, error) {
 	chosen := sel.Chosen(s.Games)
 	events := make([]calendar.Event, len(chosen))
 	for i, g := range chosen {
@@ -266,7 +296,7 @@ func (h *Handler) render(s schedule.Schedule, sel schedule.Selection) (string, e
 	if name == "" {
 		name = "Soccer"
 	}
-	return calendar.Write(calendar.Calendar{Name: name, Events: events}, h.now())
+	return calendar.Write(calendar.Calendar{Name: name, Events: events, Notices: notices}, h.now())
 }
 
 func teamNames(s schedule.Schedule) []string {

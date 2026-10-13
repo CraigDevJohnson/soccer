@@ -55,6 +55,58 @@ func TestWrite(t *testing.T) {
 	}
 }
 
+func TestWriteNotice(t *testing.T) {
+	denver, _ := time.LoadLocation(TimezoneName)
+	start := time.Date(2026, 11, 8, 19, 15, 0, 0, denver)
+	stamp := time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC)
+	c := Calendar{
+		Name:   "ROVERS",
+		Events: []Event{{GameID: "g1", Start: start, End: start.Add(45 * time.Minute), Field: "3", Home: "ROVERS", Away: "KICKERS"}},
+		Notices: []Notice{{
+			TeamID:      "111111",
+			Day:         time.Date(2026, 11, 9, 0, 0, 0, 0, denver),
+			Summary:     "ROVERS: this Session is over",
+			Description: "ROVERS has played its last game of this Session, so this calendar won't get next Session's games.",
+			URL:         "https://example.test/soccer?after=111111&after=222222",
+		}},
+	}
+	out, err := Write(c, stamp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unfolded := strings.ReplaceAll(out, "\r\n ", "")
+	notice := unfolded[strings.LastIndex(unfolded, "BEGIN:VEVENT"):]
+	for _, want := range []string{
+		"UID:session-over-111111@soccer.craigdevjohnson.com\r\n",
+		"DTSTART;VALUE=DATE:20261109\r\n",
+		"DTEND;VALUE=DATE:20261110\r\n",
+		"TRANSP:TRANSPARENT\r\n",
+		"SUMMARY:ROVERS: this Session is over\r\n",
+		"DESCRIPTION:ROVERS has played its last game of this Session\\, so this calendar won't get next Session's games.\r\n",
+		"URL:https://example.test/soccer?after=111111&after=222222\r\n",
+		"DTSTAMP:20261120T000000Z\r\n",
+	} {
+		if !strings.Contains(notice, want) {
+			t.Errorf("missing %q in:\n%s", want, notice)
+		}
+	}
+	// A notice is not a game: no reminder, no place, no time zone.
+	for _, not := range []string{"VALARM", "LOCATION", "TZID"} {
+		if strings.Contains(notice, not) {
+			t.Errorf("notice has %s:\n%s", not, notice)
+		}
+	}
+	if n := strings.Count(out, "BEGIN:VEVENT"); n != 2 {
+		t.Errorf("%d events, want the game and the notice", n)
+	}
+	// The same input gives the same bytes, so calendar apps update the
+	// notice rather than add another.
+	again, _ := Write(c, stamp)
+	if again != out {
+		t.Error("output differs between runs")
+	}
+}
+
 func TestWriteEmpty(t *testing.T) {
 	out, err := Write(Calendar{Name: "Soccer"}, time.Now())
 	if err != nil {

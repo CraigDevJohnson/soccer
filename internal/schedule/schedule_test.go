@@ -28,11 +28,11 @@ func at(day, hour int) time.Time {
 }
 
 var teams = fakeTeams{
-	"111111": {ID: "111111", Name: "ROVERS", Season: "2026", Games: []league.Game{
+	"111111": {ID: "111111", Name: "ROVERS", Season: "173", Games: []league.Game{
 		{ID: "g1", Start: at(7, 19), Field: "1", Home: "ROVERS", Away: "BANDITS"},
 		{ID: "g3", Start: at(14, 19), Field: "2", Home: "ROVERS", Away: "KICKERS"},
 	}},
-	"222222": {ID: "222222", Name: "KICKERS", Season: "2026", Games: []league.Game{
+	"222222": {ID: "222222", Name: "KICKERS", Season: "173", Games: []league.Game{
 		{ID: "g3", Start: at(14, 19), Field: "2", Home: "ROVERS", Away: "KICKERS"},
 		{ID: "g2", Start: at(14, 18), Field: "4", Home: "KICKERS", Away: "OWLS"},
 		{ID: "", Start: at(21, 18), Field: "4", Home: "OWLS", Away: "KICKERS"},

@@ -36,13 +36,17 @@ func mustLoad(name string) *time.Location {
 
 // Team is one Team for one Session, with every game the league lists for it.
 // A Team ID belongs to one season: the same people get a new Team ID when
-// they sign up again. Season is the league's own season number.
+// they sign up again. Season is the league's own season number. CoachID and
+// FacilityID are kept only to find the Team's next Session; they are never
+// served or logged.
 type Team struct {
-	ID       string   `json:"id"`
-	Name     string   `json:"name"`
-	Division Division `json:"division"`
-	Season   string   `json:"season,omitempty"`
-	Games    []Game   `json:"games"`
+	ID         string   `json:"id"`
+	Name       string   `json:"name"`
+	Division   Division `json:"division"`
+	Season     string   `json:"season,omitempty"`
+	Games      []Game   `json:"games"`
+	CoachID    string   `json:"-"`
+	FacilityID string   `json:"-"`
 }
 
 // Game is one league game. Start is in Mountain time.
@@ -55,19 +59,32 @@ type Game struct {
 }
 
 // TeamSummary is a Team as a search or a division lists it, without games.
+// Season is the league's season number, as on Team.
 type TeamSummary struct {
 	ID       string   `json:"id"`
 	Name     string   `json:"name"`
 	Division Division `json:"division"`
+	Season   string   `json:"season,omitempty"`
+}
+
+// Listed is a Team as the league's Team list has it. CoachID is the league's
+// id for the Team's coach, kept only to compare one Session's Team with the
+// next; it is never served or logged. Dropped means the Team left the
+// Session.
+type Listed struct {
+	TeamSummary
+	CoachID string `json:"-"`
+	Dropped bool   `json:"dropped,omitempty"`
 }
 
 // Division is what Let's Play Soccer calls a league at the Facility, for
-// one season: "Coed Over 30 B Sun". ID is the league's UDivSeasonID and
-// Code its short form ("CO30BSun").
+// one season: "Coed Over 30 B Sun". ID is the league's UDivSeasonID, Code
+// its short form ("CO30BSun") and Season the league's season number.
 type Division struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Code string `json:"code,omitempty"`
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Code   string `json:"code,omitempty"`
+	Season string `json:"season,omitempty"`
 }
 
 // Teams looks a Team up by its Team ID.
@@ -83,19 +100,9 @@ type Directory interface {
 	DivisionTeams(ctx context.Context, divisionID string) ([]TeamSummary, error)
 }
 
-// DayGame is one game from the Facility's day schedule: who plays whom, and
-// in which division. Start is in Mountain time.
-type DayGame struct {
-	ID    string
-	Start time.Time
-	Field string
-	Home  TeamSummary
-	Away  TeamSummary
-}
-
-// Days lists the games at the Facility on one date.
-type Days interface {
-	DayGames(ctx context.Context, date time.Time) ([]DayGame, error)
+// TeamLists reads every Team the league lists at the Facility.
+type TeamLists interface {
+	TeamList(ctx context.Context) ([]Listed, error)
 }
 
 var teamIDPattern = regexp.MustCompile(`^[0-9]{6}$`)

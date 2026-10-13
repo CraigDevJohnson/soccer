@@ -14,6 +14,7 @@ import (
 
 	"github.com/CraigDevJohnson/soccer/internal/api"
 	"github.com/CraigDevJohnson/soccer/internal/league"
+	"github.com/CraigDevJohnson/soccer/internal/next"
 )
 
 func main() {
@@ -23,9 +24,13 @@ func main() {
 	if id := os.Getenv("LEAGUE_FACILITY_ID"); id != "" {
 		client.FacilityID = id
 	}
+	directory := league.NewSearchDirectory(client, log)
+	divisions := league.NewDivisionCache(client)
 	h := &api.Handler{
 		Teams:       client,
-		Directory:   league.NewScanDirectory(client, log),
+		Directory:   directory,
+		Divisions:   divisions,
+		Next:        &next.Resolver{Teams: client, Lists: directory, Divisions: divisions},
 		LinkBaseURL: os.Getenv("LINK_BASE_URL"),
 		Log:         log,
 	}
