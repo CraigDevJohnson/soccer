@@ -98,9 +98,17 @@ func TestTeamErrors(t *testing.T) {
 		body   string
 		want   error
 	}{
-		{"not found", http.StatusNotFound, ``, ErrTeamNotFound},
+		{"not found", http.StatusNotFound, `{"message":"team not found"}`, ErrTeamNotFound},
+		{"not found, other spelling", http.StatusNotFound, `{"message": " Team Not Found "}`, ErrTeamNotFound},
+		{"gone", http.StatusGone, `{"message":"team not found"}`, ErrTeamNotFound},
+		// A 404 or 410 that does not say the Team is absent is the league in
+		// trouble: an unknown route must never empty every calendar.
+		{"unknown route", http.StatusNotFound, `{"status":404,"error":"Not Found"}`, ErrUnavailable},
+		{"other lookup not found", http.StatusNotFound, `{"message":"Division Season not found"}`, ErrUnavailable},
+		{"not found, no body", http.StatusNotFound, ``, ErrUnavailable},
+		{"not found page", http.StatusNotFound, `<html>team not found</html>`, ErrUnavailable},
+		{"gone, no body", http.StatusGone, ``, ErrUnavailable},
 		{"bad request", http.StatusBadRequest, ``, ErrUnavailable},
-		{"gone", http.StatusGone, ``, ErrTeamNotFound},
 		{"no team object", http.StatusOK, `{"message": "maintenance"}`, ErrUnavailable},
 		{"rate limited", http.StatusTooManyRequests, ``, ErrUnavailable},
 		{"refused", http.StatusForbidden, ``, ErrUnavailable},
@@ -115,6 +123,40 @@ func TestTeamErrors(t *testing.T) {
 				t.Fatalf("err = %v, want %v", err, tt.want)
 			}
 		})
+	}
+}
+
+// The Tool knows Boise only: a Team that plays at another Facility is not
+// one of ours, but a Team object without a FacilityID is accepted.
+func TestTeamFacility(t *testing.T) {
+	tests := []struct {
+		name     string
+		facility string
+		want     error
+	}{
+		{"ours", `"FacilityID": 4,`, nil},
+		{"ours as a string", `"FacilityID": "4",`, nil},
+		{"absent", ``, nil},
+		{"null", `"FacilityID": null,`, nil},
+		{"another facility", `"FacilityID": 7,`, ErrTeamNotFound},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, _ := serve(t, http.StatusOK, `{"team": {`+tt.facility+` "team_name": "ROVERS", "Season": 2026}, "games": []}`)
+			team, err := c.Team(context.Background(), "123456")
+			if !errors.Is(err, tt.want) {
+				t.Fatalf("err = %v, want %v", err, tt.want)
+			}
+			if tt.want == nil && team.Name != "ROVERS" {
+				t.Fatalf("team = %+v", team)
+			}
+		})
+	}
+
+	c, _ := serve(t, http.StatusOK, sampleTeam)
+	c.FacilityID = "7"
+	if _, err := c.Team(context.Background(), "123456"); !errors.Is(err, ErrTeamNotFound) {
+		t.Fatalf("Boise Team read by a client for facility 7: err = %v, want ErrTeamNotFound", err)
 	}
 }
 
