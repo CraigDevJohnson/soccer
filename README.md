@@ -13,13 +13,14 @@ Boise only. A person finds a Team by Team ID, by name search, or by browsing the
 | Method and path | What it does |
 |---|---|
 | `GET /teams/{teamID}` | One Team and its games, each marked `remaining` or not |
+| `GET /teams/{teamID}/next` | The Team that carries this one on into the next Session, or the Teams to choose from |
 | `GET /schedule?team=…&team=…` | Several Teams combined (up to 10); a game between two of them appears once. Teams that can't be read are listed in `failed` |
 | `GET /teams?q=…` | Name search at the Facility (a Team ID matches too) |
 | `GET /divisions` | Divisions at the Facility |
 | `GET /divisions/{divisionID}/teams` | Teams in one division |
 | `POST /calendar` | The chosen games as an .ics download |
 | `POST /links` | A Session link for the chosen games: `{token, url, teams, failed}` |
-| `GET /links/{token}` (or `{token}.ics`) | What a calendar app fetches: the chosen games, read afresh from the league. `HEAD` works too |
+| `GET /links/{token}` (or `{token}.ics`) | What a calendar app fetches: the chosen games, read afresh from the league, and a notice once a Team's Session is over. `HEAD` works too |
 | `GET /healthz` | 204 |
 
 `POST /calendar` and `POST /links` take the Teams and only what the person changed from the default:
@@ -39,6 +40,12 @@ When the league fails for any one Team, a download, a new Session link and a Ses
 ## Name search and division browsing
 
 The league lists every Team at Boise in the current Session and the next at `GET /teams/search_teams?name=%25&facility_id=4`, with no league account: the name is a prefix match and `%` is its wildcard, so the one request lists them all. Ended Sessions are not listed, so a search or a division finds the Teams of this Session and the next, and each Team and division carries its Session (`season`). The Directory keeps that list in memory for an hour and searches it there: a name matches on any part of it, ignoring case, a Team ID matches whole, and a search answers at most 50 Teams, by name and then Session. Divisions are listed by Session, then name. Teams that dropped out, and any the league places at another Facility, are left out. Nothing a person types is sent to the league, whose search treats `%`, `_` and `[ ]` as wildcards. If the wildcard ever stops working and the list comes back empty, the Directory reads it as 36 searches by first letter or digit instead. When a refresh fails, the last list still serves (with a `directory_stale` log line); with no list on hand yet, the lookup is `league_unavailable`. Craig chose this on 2026-10-13, replacing the scan of the coming week's day schedules chosen on 2026-10-10, which missed every Team without a game that week.
+
+## The next Session
+
+A Session link is good for one Session. Once a Team in it has no game left to play, and it has played its division's number of games or gone eight days without one, the link adds one all-day notice on the day after that Team's last game, "ROVERS: this Session is over", which links to the site's `/soccer` page with every Team ID of the link as `after` (`/soccer?after=123456&after=654321`). That address is `LINK_BASE_URL` without its `link/`; when `LINK_BASE_URL` does not end in `/soccer/link/`, no notice is added. A division's game length and number of games come from the league's `GET /division_seasons/{id}` and are kept for six hours; when that lookup fails, the notice waits for a later fetch (a `session_over_check_failed` log line) and the calendar still answers. A download never gets the notice, and the link itself never follows a Team into its next Session.
+
+`GET /teams/{teamID}/next` is what that page asks. It looks in the Team list for the Team's name, trimmed and ignoring case, in the earliest later Session that has it, leaving out Teams that dropped out and one-day events such as a Saturday tournament. `follow` is exactly one such Team, with the same coach; `ask` is one or more for the person to choose from, each marked `same_coach` or not; `none` is none yet, with up to three of the same coach's Teams under other names in `similar`. The coach is compared, never named: no answer or log line carries a coach id. Measured on 2026-10-12, the same name and coach found a Team's next Session 86% of the time.
 
 ## Logs
 

@@ -36,15 +36,28 @@ type Event struct {
 	Away   string
 }
 
-// Calendar is a named list of events.
+// Notice is an all-day note on one day, with no reminder and shown as
+// free: the end of a Team's Session, written into its Session link. Day's
+// date is used as it reads in Day's own location.
+type Notice struct {
+	TeamID      string
+	Day         time.Time
+	Summary     string
+	Description string
+	URL         string
+}
+
+// Calendar is a named list of events, and notices written after them.
 type Calendar struct {
-	Name   string
-	Events []Event
+	Name    string
+	Events  []Event
+	Notices []Notice
 }
 
 // Write renders c as an iCalendar document. stamp is the DTSTAMP for every
-// event. Each event's UID is built from its game ID alone, so a calendar app
-// that fetches a Session link again updates games instead of duplicating them.
+// event. Each event's UID is built from its game ID alone, and each notice's
+// from its Team ID, so a calendar app that fetches a Session link again
+// updates them instead of duplicating them.
 func Write(c Calendar, stamp time.Time) (string, error) {
 	loc := league.Mountain
 	cal := ics.NewCalendarFor("craigdevjohnson.com Let's Plan Soccer")
@@ -71,6 +84,16 @@ func Write(c Calendar, stamp time.Time) (string, error) {
 		alarm.SetAction(ics.ActionDisplay)
 		alarm.SetTrigger(AlarmTrigger)
 		alarm.AddProperty(ics.ComponentPropertyDescription, "Soccer game starting soon")
+	}
+	for _, n := range c.Notices {
+		ev := cal.AddEvent(fmt.Sprintf("session-over-%s@%s", n.TeamID, uidDomain))
+		ev.SetSummary(n.Summary)
+		ev.SetAllDayStartAt(n.Day)
+		ev.SetAllDayEndAt(n.Day.AddDate(0, 0, 1))
+		ev.SetTimeTransparency(ics.TransparencyTransparent)
+		ev.SetDescription(n.Description)
+		ev.SetURL(n.URL)
+		ev.SetDtStampTime(stamp.UTC())
 	}
 	// iCalendar content lines end in CRLF (RFC 5545 §3.1).
 	return cal.Serialize(ics.WithNewLineWindows), nil

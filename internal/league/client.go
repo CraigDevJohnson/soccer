@@ -46,7 +46,7 @@ func NewClient(baseURL string) *Client {
 // the league no longer sends, so both are accepted. Numbers and strings are
 // both accepted where the league might change its mind, and a missing
 // "team" object is told apart from an empty one. FacilityID is where the
-// Team plays.
+// Team plays and UCoachID the league's id for its coach.
 type teamResponse struct {
 	Team *struct {
 		UTeamID      flexString `json:"UTeamID"`
@@ -56,6 +56,7 @@ type teamResponse struct {
 		UDivSeasonID flexString `json:"UDivSeasonID"`
 		Season       flexString `json:"Season"`
 		FacilityID   flexString `json:"FacilityID"`
+		UCoachID     flexString `json:"UCoachID"`
 	} `json:"team"`
 	Games []struct {
 		UGameID           flexString `json:"UGameID"`
@@ -113,7 +114,7 @@ func (c *Client) Team(ctx context.Context, teamID string) (Team, error) {
 	// or a 5xx means the league itself is in trouble and must not read as
 	// "this Team is gone", which would empty every Session link.
 	case resp.StatusCode == http.StatusNotFound, resp.StatusCode == http.StatusGone:
-		if saysTeamNotFound(resp.Body) {
+		if saysMessage(resp.Body, "team not found") {
 			return Team{}, ErrTeamNotFound
 		}
 		return Team{}, fmt.Errorf("%w: team %s: status %d without a team not found message", ErrUnavailable, id, resp.StatusCode)
@@ -135,15 +136,18 @@ func (c *Client) Team(ctx context.Context, teamID string) (Team, error) {
 	}
 	// A Team at another Facility is not one of ours, though its Team ID is
 	// real. A missing FacilityID is not proof of another Facility.
-	if f := strings.TrimSpace(string(body.Team.FacilityID)); f != "" && f != c.FacilityID {
-		return Team{}, fmt.Errorf("%w: team %s plays at facility %s, not %s", ErrTeamNotFound, id, f, c.FacilityID)
+	facility := strings.TrimSpace(string(body.Team.FacilityID))
+	if facility != "" && facility != c.FacilityID {
+		return Team{}, fmt.Errorf("%w: team %s plays at facility %s, not %s", ErrTeamNotFound, id, facility, c.FacilityID)
 	}
 
 	team := Team{
-		ID:       id,
-		Name:     body.Team.TeamName,
-		Division: Division{ID: string(body.Team.UDivSeasonID), Name: body.Team.DivisionName, Code: body.Team.DivCode},
-		Games:    []Game{},
+		ID:         id,
+		Name:       body.Team.TeamName,
+		Division:   Division{ID: string(body.Team.UDivSeasonID), Name: body.Team.DivisionName, Code: body.Team.DivCode},
+		Games:      []Game{},
+		CoachID:    strings.TrimSpace(string(body.Team.UCoachID)),
+		FacilityID: facility,
 	}
 	if s := string(body.Team.Season); s != "" && s != "0" {
 		team.Season = s
@@ -184,19 +188,20 @@ func (c *Client) Team(ctx context.Context, teamID string) (Team, error) {
 	return team, nil
 }
 
-// saysTeamNotFound reports whether a 404 or 410 body is the league's answer
-// for an unknown Team ID, {"message":"team not found"}, as seen live on
-// 2026-10-12. An unknown route answers 404 too, with {"status":404,
-// "error":"Not Found"}, and other lookups have their own messages; none of
-// those says this Team is gone.
-func saysTeamNotFound(body io.Reader) bool {
+// saysMessage reports whether a 404 or 410 body is the league's own answer
+// for an unknown ID, such as {"message":"team not found"} for a Team ID, as
+// seen live on 2026-10-12. An unknown route answers 404 too, with
+// {"status":404,"error":"Not Found"}, and other lookups have their own
+// messages ("Division Season not found"); none of those says this Team, or
+// this division, is gone.
+func saysMessage(body io.Reader, message string) bool {
 	var b struct {
 		Message string `json:"message"`
 	}
 	if err := json.NewDecoder(io.LimitReader(body, 4<<10)).Decode(&b); err != nil {
 		return false
 	}
-	return strings.EqualFold(strings.TrimSpace(b.Message), "team not found")
+	return strings.EqualFold(strings.TrimSpace(b.Message), message)
 }
 
 // get makes one league request. A caller that went away is not a league

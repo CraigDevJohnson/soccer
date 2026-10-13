@@ -36,13 +36,17 @@ func mustLoad(name string) *time.Location {
 
 // Team is one Team for one Session, with every game the league lists for it.
 // A Team ID belongs to one season: the same people get a new Team ID when
-// they sign up again. Season is the league's own season number.
+// they sign up again. Season is the league's own season number. CoachID and
+// FacilityID are kept only to find the Team's next Session; they are never
+// served or logged.
 type Team struct {
-	ID       string   `json:"id"`
-	Name     string   `json:"name"`
-	Division Division `json:"division"`
-	Season   string   `json:"season,omitempty"`
-	Games    []Game   `json:"games"`
+	ID         string   `json:"id"`
+	Name       string   `json:"name"`
+	Division   Division `json:"division"`
+	Season     string   `json:"season,omitempty"`
+	Games      []Game   `json:"games"`
+	CoachID    string   `json:"-"`
+	FacilityID string   `json:"-"`
 }
 
 // Game is one league game. Start is in Mountain time.

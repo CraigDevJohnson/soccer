@@ -17,7 +17,7 @@ import (
 // "UGameID" and times carry milliseconds.
 const sampleTeam = `{
   "team": {"UTeamID": 123456, "team_name": "ROVERS", "division_name": "Coed Over 30 B Sun", "div_code": "CO30BSun",
-           "Dropped": false, "UDivSeasonID": 110046, "Season": 2026, "facility_name": "Boise", "FacilityID": 4},
+           "Dropped": false, "UCoachID": 900001, "UDivSeasonID": 110046, "Season": 2026, "facility_name": "Boise", "FacilityID": 4},
   "games": [
     {"UGameID": 2988396, "SchedGameDateTime": "2026-10-14T19:15:00.000Z", "schedGameEndTime": null, "field_name": "Field 3", "Field": 3,
      "result": null, "FacilityID": 4, "UTeam1": 123456, "UTeam2": 222222,
@@ -79,6 +79,26 @@ func TestTeamParsesGamesInMountainTime(t *testing.T) {
 	}
 	if team.Games[1].Field != "2" {
 		t.Fatalf("field fallback to number: %+v", team.Games[1])
+	}
+}
+
+// The coach id and Facility are kept to find the Team's next Session, and
+// never served.
+func TestTeamKeepsCoachAndFacilityPrivate(t *testing.T) {
+	c, _ := serve(t, http.StatusOK, sampleTeam)
+	team, err := c.Team(context.Background(), "123456")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if team.CoachID != "900001" || team.FacilityID != "4" {
+		t.Fatalf("coach %q, facility %q", team.CoachID, team.FacilityID)
+	}
+	b, err := json.Marshal(team)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := strings.ToLower(string(b)); strings.Contains(s, "900001") || strings.Contains(s, "coach") || strings.Contains(s, "facility") {
+		t.Fatalf("coach or facility serialised: %s", b)
 	}
 }
 

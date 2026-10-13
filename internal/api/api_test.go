@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +18,7 @@ import (
 	"github.com/awslabs/aws-lambda-go-api-proxy/httpadapter"
 
 	"github.com/CraigDevJohnson/soccer/internal/league"
+	"github.com/CraigDevJohnson/soccer/internal/next"
 )
 
 func at(day, hour int) time.Time {
@@ -35,7 +38,7 @@ func (f fakeTeams) Team(_ context.Context, id string) (league.Team, error) {
 	}
 	switch id {
 	case "111111":
-		return league.Team{ID: id, Name: "ROVERS", Season: "2026", Games: []league.Game{
+		return league.Team{ID: id, Name: "ROVERS", Season: "2026", CoachID: "900001", Games: []league.Game{
 			{ID: "g1", Start: at(7, 19), Field: "1", Home: "ROVERS", Away: "BANDITS"},
 			{ID: "g3", Start: at(14, 19), Field: "2", Home: "ROVERS", Away: "KICKERS"},
 		}}, nil
@@ -65,17 +68,45 @@ func (fakeDirectory) DivisionTeams(_ context.Context, id string) ([]league.TeamS
 	return []league.TeamSummary{{ID: "111111", Name: "ROVERS", Division: league.Division{ID: id, Name: "Coed Open"}}}, nil
 }
 
+// fakeLists is the league's Team list for the next Session: ROVERS again
+// under the same coach, and a Team KICKERS's coach does not have.
+type fakeLists struct{}
+
+func (fakeLists) Listed(context.Context) ([]league.Listed, error) {
+	d := league.Division{ID: "d2", Name: "Coed Open", Season: "2027"}
+	return []league.Listed{
+		{TeamSummary: league.TeamSummary{ID: "311111", Name: "ROVERS", Division: d, Season: "2027"}, CoachID: "900001"},
+		{TeamSummary: league.TeamSummary{ID: "322222", Name: "OWLS", Division: d, Season: "2027"}, CoachID: "900003"},
+	}, nil
+}
+
+// fakeDivisions says every division plays 8 games of 45 minutes, or fails.
+type fakeDivisions struct{ down bool }
+
+func (f fakeDivisions) DivisionSeason(_ context.Context, id string) (league.DivisionSeason, error) {
+	if f.down {
+		return league.DivisionSeason{}, league.ErrUnavailable
+	}
+	return league.DivisionSeason{ID: id, GameLength: 45 * time.Minute, NumGames: 8}, nil
+}
+
 func newServer(t *testing.T, teams league.Teams, dir league.Directory) (http.Handler, *bytes.Buffer) {
 	t.Helper()
+	h, logs := newHandler(teams, dir)
+	return h.Router(), logs
+}
+
+func newHandler(teams league.Teams, dir league.Directory) (*Handler, *bytes.Buffer) {
 	logs := &bytes.Buffer{}
-	h := &Handler{
+	return &Handler{
 		Teams:       teams,
 		Directory:   dir,
+		Divisions:   fakeDivisions{},
+		Next:        &next.Resolver{Teams: teams, Lists: fakeLists{}, Divisions: fakeDivisions{}},
 		LinkBaseURL: "https://example.test/soccer/link/",
 		Log:         slog.New(slog.NewJSONHandler(logs, nil)),
 		Now:         func() time.Time { return now },
-	}
-	return h.Router(), logs
+	}, logs
 }
 
 func do(t *testing.T, h http.Handler, method, target, body string) *httptest.ResponseRecorder {
@@ -444,5 +475,190 @@ func TestPanicWhileReadingATeamIs503(t *testing.T) {
 	rec := do(t, h, "GET", "/teams/111111", "")
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestNextSession(t *testing.T) {
+	h, logs := newServer(t, fakeTeams{}, fakeDirectory{})
+	rec := do(t, h, "GET", "/teams/111111/next", "")
+	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "application/json" {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	// The shape the site reads. No coach id is in it.
+	want := `{"team":{"id":"111111","name":"ROVERS","division":{"id":"","name":"","season":"2026"},"season":"2026"},` +
+		`"match":"follow",` +
+		`"teams":[{"id":"311111","name":"ROVERS","division":{"id":"d2","name":"Coed Open","season":"2027"},"season":"2027","same_coach":true}],` +
+		`"similar":[]}`
+	if got := strings.TrimSpace(rec.Body.String()); got != want {
+		t.Fatalf("got\n%s\nwant\n%s", got, want)
+	}
+
+	// No Team by the name in the next Session, and no coach to compare.
+	none := decode[struct {
+		Match   string
+		Teams   []any
+		Similar []any
+	}](t, do(t, h, "GET", "/teams/222222/next", ""))
+	if none.Match != "none" || none.Teams == nil || len(none.Teams) != 0 || none.Similar == nil {
+		t.Fatalf("%+v", none)
+	}
+
+	if rec := do(t, h, "GET", "/teams/333333/next", ""); rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "team_not_found") {
+		t.Fatalf("unknown team: %d %s", rec.Code, rec.Body)
+	}
+	if rec := do(t, h, "GET", "/teams/12/next", ""); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "invalid_team_id") {
+		t.Fatalf("bad id: %d %s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(logs.String(), `"route":"/teams/{teamID}/next"`) || strings.Contains(logs.String(), "/teams/111111/next") {
+		t.Fatalf("route not logged, or the path was: %s", logs)
+	}
+	if strings.Contains(logs.String(), "900001") {
+		t.Fatal("coach id reached the logs")
+	}
+
+	down, logs := newServer(t, fakeTeams{down: true}, fakeDirectory{})
+	if rec := do(t, down, "GET", "/teams/111111/next", ""); rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "league_unavailable") {
+		t.Fatalf("league down: %d %s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(logs.String(), `"msg":"league_unavailable"`) {
+		t.Fatalf("no alert line in logs: %s", logs)
+	}
+}
+
+// seasonTeams are Teams near the end of a Session, in division d1.
+type seasonTeams map[string][]league.Game
+
+func (s seasonTeams) Team(_ context.Context, id string) (league.Team, error) {
+	games, ok := s[id]
+	if !ok {
+		return league.Team{}, league.ErrTeamNotFound
+	}
+	name := map[string]string{"111111": "ROVERS", "222222": "KICKERS"}[id]
+	return league.Team{ID: id, Name: name, Season: "173", Division: league.Division{ID: "d1", Name: "Coed Open"}, Games: games}, nil
+}
+
+// weekly is n games a week apart, the last starting at last.
+func weekly(prefix string, last time.Time, n int) []league.Game {
+	var games []league.Game
+	for i := range n {
+		start := last.AddDate(0, 0, -7*(n-1-i))
+		games = append(games, league.Game{ID: fmt.Sprintf("%s%d", prefix, i+1), Start: start, Field: "1", Home: "ROVERS", Away: "OWLS"})
+	}
+	return games
+}
+
+// A Session link adds one notice for each Team whose Session is over, so a
+// calendar that will get no more games says where next Session's are.
+func TestSessionLinkNoticesTheEndOfASession(t *testing.T) {
+	// now is Oct 10, 12:00.
+	midSession := append(weekly("m", at(4, 19), 2), weekly("n", at(11, 19), 1)...)
+	tests := []struct {
+		name   string
+		rovers []league.Game
+		day    string // the notice's date, or "" for none
+	}{
+		{"mid-Session", midSession, ""},
+		// The league posts most games after the first: one game played is
+		// not the end.
+		{"only the first game posted and played", weekly("r", at(4, 19), 1), ""},
+		{"every game of the division played", weekly("r", at(4, 19), 8), "20261005"},
+		{"eight days since the last game", weekly("r", at(1, 19), 3), "20261002"},
+		{"not yet eight days", weekly("r", at(2, 19), 3), ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			teams := seasonTeams{"111111": tt.rovers, "222222": weekly("k", at(14, 18), 6)}
+			h, _ := newServer(t, teams, fakeDirectory{})
+			created := decode[struct{ Token string }](t, do(t, h, "POST", "/links", `{"team_ids":["111111","222222"],"since":"2026-08-01T00:00:00Z"}`))
+			rec := do(t, h, "GET", "/links/"+created.Token+".ics", "")
+			if rec.Code != http.StatusOK {
+				t.Fatalf("%d %s", rec.Code, rec.Body)
+			}
+			body := strings.ReplaceAll(rec.Body.String(), "\r\n ", "")
+			if tt.day == "" {
+				if strings.Contains(body, "session-over-") {
+					t.Fatalf("notice mid-Session:\n%s", body)
+				}
+				return
+			}
+			for _, want := range []string{
+				"UID:session-over-111111@soccer.craigdevjohnson.com\r\n",
+				"DTSTART;VALUE=DATE:" + tt.day + "\r\n",
+				"SUMMARY:ROVERS: this Session is over\r\n",
+				"DESCRIPTION:ROVERS has played its last game of this Session\\, so this calendar won't get next Session's games. " +
+					"Get next Session's calendar from Let's Plan Soccer: https://example.test/soccer?after=111111&after=222222\r\n",
+				"URL:https://example.test/soccer?after=111111&after=222222\r\n",
+				"TRANSP:TRANSPARENT\r\n",
+			} {
+				if !strings.Contains(body, want) {
+					t.Errorf("missing %q in:\n%s", want, body)
+				}
+			}
+			// KICKERS still has games to play.
+			if n := strings.Count(body, "session-over-"); n != 1 {
+				t.Errorf("%d notices, want one", n)
+			}
+		})
+	}
+}
+
+func TestSessionNoticeIsTheSameEachFetch(t *testing.T) {
+	teams := seasonTeams{"111111": weekly("r", at(4, 19), 8)}
+	h, _ := newHandler(teams, fakeDirectory{})
+	created := decode[struct{ Token string }](t, do(t, h.Router(), "POST", "/links", `{"team_ids":["111111"]}`))
+	first := do(t, h.Router(), "GET", "/links/"+created.Token, "").Body.String()
+	h.Now = func() time.Time { return now.Add(36 * time.Hour) }
+	second := do(t, h.Router(), "GET", "/links/"+created.Token, "").Body.String()
+	stamp := regexp.MustCompile(`DTSTAMP:[0-9TZ]+`)
+	if !strings.Contains(first, "session-over-111111") || stamp.ReplaceAllString(first, "") != stamp.ReplaceAllString(second, "") {
+		t.Fatalf("fetches differ:\n%s\n---\n%s", first, second)
+	}
+}
+
+func TestNoSessionNoticeWithoutTheSitesAddress(t *testing.T) {
+	teams := seasonTeams{"111111": weekly("r", at(4, 19), 8)}
+	for _, base := range []string{"", "https://example.test/calendars/"} {
+		h, _ := newHandler(teams, fakeDirectory{})
+		h.LinkBaseURL = base
+		r := h.Router()
+		created := decode[struct{ Token string }](t, do(t, r, "POST", "/links", `{"team_ids":["111111"]}`))
+		rec := do(t, r, "GET", "/links/"+created.Token, "")
+		if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "session-over-") {
+			t.Errorf("LinkBaseURL %q: %d\n%s", base, rec.Code, rec.Body)
+		}
+	}
+}
+
+// The notice is for a Session link: a downloaded file is not fetched again.
+func TestNoSessionNoticeInADownload(t *testing.T) {
+	h, _ := newServer(t, seasonTeams{"111111": weekly("r", at(4, 19), 8)}, fakeDirectory{})
+	rec := do(t, h, "POST", "/calendar", `{"team_ids":["111111"],"since":"2026-08-01T00:00:00Z"}`)
+	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "session-over-") || !strings.Contains(rec.Body.String(), "UID:game-r8@") {
+		t.Fatalf("%d\n%s", rec.Code, rec.Body)
+	}
+}
+
+// A division the league fails to answer for leaves the notice out this time;
+// the calendar's games are all there, so it still answers.
+func TestSessionNoticeLeftOutWhenTheDivisionFails(t *testing.T) {
+	h, logs := newHandler(seasonTeams{"111111": weekly("r", at(4, 19), 8)}, fakeDirectory{})
+	h.Divisions = fakeDivisions{down: true}
+	r := h.Router()
+	created := decode[struct{ Token string }](t, do(t, r, "POST", "/links", `{"team_ids":["111111"],"since":"2026-08-01T00:00:00Z"}`))
+	rec := do(t, r, "GET", "/links/"+created.Token, "")
+	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "session-over-") || strings.Count(rec.Body.String(), "BEGIN:VEVENT") != 8 {
+		t.Fatalf("%d\n%s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(logs.String(), `"msg":"session_over_check_failed"`) || strings.Contains(logs.String(), `"msg":"league_unavailable"`) {
+		t.Fatalf("logs: %s", logs)
+	}
+
+	// While a game is still to come, the division is not looked up at all.
+	h, logs = newHandler(seasonTeams{"111111": append(weekly("r", at(4, 19), 7), weekly("s", at(11, 19), 1)...)}, fakeDirectory{})
+	h.Divisions = fakeDivisions{down: true}
+	r = h.Router()
+	created = decode[struct{ Token string }](t, do(t, r, "POST", "/links", `{"team_ids":["111111"]}`))
+	if rec := do(t, r, "GET", "/links/"+created.Token, ""); rec.Code != http.StatusOK || strings.Contains(logs.String(), "session_over_check_failed") {
+		t.Fatalf("%d, logs: %s", rec.Code, logs)
 	}
 }
