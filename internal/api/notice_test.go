@@ -35,10 +35,14 @@ func TestSessionOver(t *testing.T) {
 		{"no game length: 45 minutes", eight(at(10, 11)), league.DivisionSeason{NumGames: 8}, at(10, 12), "2026-10-11"},
 		// An unknown game count is not "every game played"; eight quiet days are.
 		{"no game count", eight(at(4, 19)), league.DivisionSeason{GameLength: 45 * time.Minute}, at(10, 12), ""},
-		{"no game count, eight quiet days", eight(at(1, 19)), league.DivisionSeason{GameLength: 45 * time.Minute}, at(10, 12), "2026-10-02"},
-		{"fewer games than the count, eight quiet days", eight(at(1, 19))[5:], division, at(10, 12), "2026-10-02"},
-		// The day after is the Mountain day, whatever zone the time is in.
-		{"late game read in UTC", []schedule.Game{game(time.Date(2026, 10, 2, 5, 30, 0, 0, time.UTC))}, division, at(10, 12), "2026-10-02"},
+		// Ended by the quiet rule alone, the notice goes on the day the rule
+		// first holds, not a week back on the day after the last game.
+		{"no game count, eight quiet days", eight(at(1, 19)), league.DivisionSeason{GameLength: 45 * time.Minute}, at(10, 12), "2026-10-09"},
+		{"fewer games than the count, eight quiet days", eight(at(1, 19))[5:], division, at(10, 12), "2026-10-09"},
+		{"fewer games than the count, not yet eight days", eight(at(2, 19))[5:], division, at(10, 12), ""},
+		// The day is the Mountain day, whatever zone the time is in.
+		{"late game read in UTC", []schedule.Game{game(time.Date(2026, 10, 2, 5, 30, 0, 0, time.UTC))}, league.DivisionSeason{GameLength: 45 * time.Minute, NumGames: 1}, at(10, 12), "2026-10-02"},
+		{"quiet from late at night", []schedule.Game{game(time.Date(2026, 10, 2, 4, 30, 0, 0, time.UTC))}, division, at(10, 12), "2026-10-09"},
 		{"the day clocks go back", eight(time.Date(2026, 10, 31, 22, 0, 0, 0, league.Mountain)), division, time.Date(2026, 11, 2, 9, 0, 0, 0, league.Mountain), "2026-11-01"},
 	}
 	for _, tt := range tests {

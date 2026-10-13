@@ -176,6 +176,64 @@ func TestDirectoryRefreshesAfterTTLAndServesStaleOnFailure(t *testing.T) {
 	}
 }
 
+// An empty Team list is the league failing without saying so: the last list
+// keeps serving, and the league is asked again after EmptyListTTL, not on
+// every call and not after a whole hour.
+func TestDirectoryKeepsItsListWhenTheLeagueListsNoTeams(t *testing.T) {
+	lists := &fakeLists{}
+	d, now := newDir(lists)
+	var logs bytes.Buffer
+	d.Log = slog.New(slog.NewJSONHandler(&logs, nil))
+	ctx := context.Background()
+	if _, err := d.Divisions(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	*now = now.Add(ListTTL)
+	lists.teams = []Listed{}
+	for range 2 {
+		got, err := d.SearchTeams(ctx, "rovers")
+		if err != nil || len(got) != 2 {
+			t.Fatalf("last list not served: %+v %v", got, err)
+		}
+	}
+	if lists.count() != 2 || !strings.Contains(logs.String(), `"msg":"directory_stale"`) {
+		t.Fatalf("%d calls, logs: %s", lists.count(), logs.String())
+	}
+
+	*now = now.Add(EmptyListTTL)
+	lists.teams = nil
+	if _, err := d.SearchTeams(ctx, "rovers"); err != nil || lists.count() != 3 {
+		t.Fatalf("not asked again after EmptyListTTL: %v, %d calls", err, lists.count())
+	}
+}
+
+// With no list on hand, an empty one serves, but only for EmptyListTTL and
+// with a warning line.
+func TestDirectoryHoldsAnEmptyListBriefly(t *testing.T) {
+	lists := &fakeLists{teams: []Listed{}}
+	d, now := newDir(lists)
+	var logs bytes.Buffer
+	d.Log = slog.New(slog.NewJSONHandler(&logs, nil))
+	ctx := context.Background()
+	for range 2 {
+		got, err := d.SearchTeams(ctx, "rovers")
+		if err != nil || len(got) != 0 {
+			t.Fatalf("%+v %v", got, err)
+		}
+	}
+	if lists.count() != 1 || !strings.Contains(logs.String(), `"msg":"team_list_empty"`) {
+		t.Fatalf("%d calls, logs: %s", lists.count(), logs.String())
+	}
+
+	*now = now.Add(EmptyListTTL)
+	lists.teams = nil
+	got, err := d.SearchTeams(ctx, "rovers")
+	if err != nil || len(got) != 2 || lists.count() != 2 {
+		t.Fatalf("empty list kept too long: %+v %v, %d calls", got, err, lists.count())
+	}
+}
+
 func TestDirectoryWithNothingOnHandIsUnavailable(t *testing.T) {
 	d, _ := newDir(&fakeLists{fail: ErrUnavailable})
 	if _, err := d.SearchTeams(context.Background(), "rovers"); !errors.Is(err, ErrUnavailable) {

@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -562,7 +563,8 @@ func TestSessionLinkNoticesTheEndOfASession(t *testing.T) {
 		// not the end.
 		{"only the first game posted and played", weekly("r", at(4, 19), 1), ""},
 		{"every game of the division played", weekly("r", at(4, 19), 8), "20261005"},
-		{"eight days since the last game", weekly("r", at(1, 19), 3), "20261002"},
+		// The day the eight days are up, not the day after the last game.
+		{"eight days since the last game", weekly("r", at(1, 19), 3), "20261009"},
 		{"not yet eight days", weekly("r", at(2, 19), 3), ""},
 	}
 	for _, tt := range tests {
@@ -660,5 +662,95 @@ func TestSessionNoticeLeftOutWhenTheDivisionFails(t *testing.T) {
 	created = decode[struct{ Token string }](t, do(t, r, "POST", "/links", `{"team_ids":["111111"]}`))
 	if rec := do(t, r, "GET", "/links/"+created.Token, ""); rec.Code != http.StatusOK || strings.Contains(logs.String(), "session_over_check_failed") {
 		t.Fatalf("%d, logs: %s", rec.Code, logs)
+	}
+}
+
+// sessionTeams are Teams with their Session, division and games.
+type sessionTeams map[string]league.Team
+
+func (s sessionTeams) Team(_ context.Context, id string) (league.Team, error) {
+	t, ok := s[id]
+	if !ok {
+		return league.Team{}, league.ErrTeamNotFound
+	}
+	t.ID = id
+	return t, nil
+}
+
+// A link that already holds next Session's Team gets no notice when this
+// Session's Team ends: the calendar does get next Session's games. When the
+// later Team's Session ends too, its notice passes on only that Team.
+func TestNoSessionNoticeWhenTheLinkHoldsALaterSession(t *testing.T) {
+	teams := sessionTeams{
+		"111111": {Name: "ROVERS", Season: "173", Division: league.Division{ID: "d1"}, Games: weekly("r", at(4, 19), 8)},
+		"211111": {Name: "ROVERS", Season: "175", Division: league.Division{ID: "d2"}, Games: weekly("n", at(25, 19), 8)},
+	}
+	h, _ := newHandler(teams, fakeDirectory{})
+	r := h.Router()
+	created := decode[struct{ Token string }](t, do(t, r, "POST", "/links", `{"team_ids":["111111","211111"],"since":"2026-08-01T00:00:00Z"}`))
+	body := do(t, r, "GET", "/links/"+created.Token, "").Body.String()
+	if strings.Contains(body, "session-over-") || !strings.Contains(body, "UID:game-n8@") {
+		t.Fatalf("notice beside next Session's Team:\n%s", body)
+	}
+
+	h.Now = func() time.Time { return at(26, 12) }
+	body = strings.ReplaceAll(do(t, r, "GET", "/links/"+created.Token, "").Body.String(), "\r\n ", "")
+	if !strings.Contains(body, "UID:session-over-211111@") || strings.Count(body, "session-over-") != 1 ||
+		!strings.Contains(body, "URL:https://example.test/soccer?after=211111\r\n") {
+		t.Fatalf("want one notice passing on 211111 alone:\n%s", body)
+	}
+}
+
+// gatedDivisions answers only once n lookups are waiting at the same time,
+// so lookups made one after another fail. It counts lookups by division and
+// keeps the deadline they were given.
+type gatedDivisions struct {
+	n        int
+	mu       sync.Mutex
+	calls    map[string]int
+	waiting  int
+	deadline time.Time
+	open     chan struct{}
+}
+
+func (g *gatedDivisions) DivisionSeason(ctx context.Context, id string) (league.DivisionSeason, error) {
+	g.mu.Lock()
+	g.calls[id]++
+	g.deadline, _ = ctx.Deadline()
+	if g.waiting++; g.waiting == g.n {
+		close(g.open)
+	}
+	g.mu.Unlock()
+	select {
+	case <-g.open:
+		return league.DivisionSeason{ID: id, GameLength: 45 * time.Minute, NumGames: 8}, nil
+	case <-time.After(time.Second):
+		return league.DivisionSeason{}, league.ErrUnavailable
+	}
+}
+
+// A link's divisions are looked up together, each once, and within
+// noticeBudget, so a slow league cannot hold a calendar past the site's
+// wait: one lookup after another took 8 s for 10 Teams.
+func TestSessionNoticesLookDivisionsUpTogether(t *testing.T) {
+	teams := sessionTeams{
+		"111111": {Name: "ROVERS", Season: "173", Division: league.Division{ID: "d1"}, Games: weekly("r", at(4, 19), 8)},
+		"222222": {Name: "KICKERS", Season: "173", Division: league.Division{ID: "d2"}, Games: weekly("k", at(4, 18), 8)},
+		"333333": {Name: "OWLS", Season: "173", Division: league.Division{ID: "d2"}, Games: weekly("o", at(4, 20), 8)},
+	}
+	divisions := &gatedDivisions{n: 2, calls: map[string]int{}, open: make(chan struct{})}
+	h, _ := newHandler(teams, fakeDirectory{})
+	h.Divisions = divisions
+	r := h.Router()
+	created := decode[struct{ Token string }](t, do(t, r, "POST", "/links", `{"team_ids":["111111","222222","333333"]}`))
+	rec := do(t, r, "GET", "/links/"+created.Token, "")
+	if n := strings.Count(rec.Body.String(), "UID:session-over-"); rec.Code != http.StatusOK || n != 3 {
+		t.Fatalf("%d, %d notices, want 3:\n%s", rec.Code, n, rec.Body)
+	}
+	if divisions.calls["d1"] != 1 || divisions.calls["d2"] != 1 {
+		t.Fatalf("lookups = %v, want each division once", divisions.calls)
+	}
+	if divisions.deadline.IsZero() || divisions.deadline.After(time.Now().Add(noticeBudget)) {
+		t.Fatalf("lookups had until %v, want at most %v", divisions.deadline, noticeBudget)
 	}
 }

@@ -15,6 +15,10 @@ import (
 const (
 	// ListTTL is how long one Team list serves before the next is read.
 	ListTTL = time.Hour
+	// EmptyListTTL is how long an empty Team list waits before the next
+	// read. Reading one can take 37 requests: the wildcard search, then one
+	// by each first letter or digit.
+	EmptyListTTL = 5 * time.Minute
 	// MaxSearchResults caps a name search.
 	MaxSearchResults = 50
 )
@@ -33,7 +37,8 @@ type SearchDirectory struct {
 
 	mu     sync.Mutex
 	index  *index
-	listed time.Time
+	listed time.Time // when the list on hand was read
+	next   time.Time // when it is read again
 }
 
 // NewSearchDirectory returns a Directory over lists.
@@ -98,6 +103,12 @@ func (d *SearchDirectory) Listed(ctx context.Context) ([]Listed, error) {
 // listing beats no listing, and the Team lookup itself still tells the
 // truth. Concurrent callers wait for one refresh rather than each starting
 // their own.
+//
+// The league lists the current Session's Teams, so an empty list is taken
+// as the league failing without saying so: the last list keeps serving, or
+// with none on hand the empty one serves for EmptyListTTL only. Either way
+// a warning line says so, since every search would otherwise come back
+// empty for an hour with nothing in the logs.
 func (d *SearchDirectory) current(ctx context.Context) (*index, error) {
 	now := time.Now()
 	if d.Now != nil {
@@ -105,21 +116,35 @@ func (d *SearchDirectory) current(ctx context.Context) (*index, error) {
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.index != nil && now.Sub(d.listed) < ListTTL {
+	if d.index != nil && now.Before(d.next) {
 		return d.index, nil
 	}
 	listed, err := d.Lists.TeamList(ctx)
-	if err != nil {
+	switch {
+	case err != nil:
 		if d.index != nil && !errors.Is(err, context.Canceled) {
-			if d.Log != nil {
-				d.Log.Warn("directory_stale", "err", err, "listed", d.listed)
-			}
+			d.warn("directory_stale", "err", err, "listed", d.listed)
 			return d.index, nil
 		}
 		return nil, err
+	case len(listed) == 0:
+		d.next = now.Add(EmptyListTTL)
+		if d.index != nil && len(d.index.listed) > 0 {
+			d.warn("directory_stale", "err", "the league listed no Teams", "listed", d.listed)
+			return d.index, nil
+		}
+		d.warn("team_list_empty")
+		d.index, d.listed = build(listed), now
+		return d.index, nil
 	}
-	d.index, d.listed = build(listed), now
+	d.index, d.listed, d.next = build(listed), now, now.Add(ListTTL)
 	return d.index, nil
+}
+
+func (d *SearchDirectory) warn(msg string, args ...any) {
+	if d.Log != nil {
+		d.Log.Warn(msg, args...)
+	}
 }
 
 // build indexes one Team list. A Team that dropped out is left out of the
