@@ -137,16 +137,19 @@ func (h *Handler) lookUpDivisions(ctx context.Context, ids []string) map[string]
 	return divisions
 }
 
-// laterInLink reports whether the link holds a Team of a later Session than
-// t, by the league's season numbers.
+// laterInLink reports whether the link already holds t in a later Session:
+// a Team with the same name, trimmed and ignoring case, and a later season
+// number. Another Team of a later Session is someone else's Team, so it
+// does not stand in for t's.
 func laterInLink(t schedule.Team, teams []schedule.Team) bool {
 	season, err := strconv.Atoi(t.Season)
 	if err != nil {
 		return false
 	}
+	name := strings.ToUpper(strings.TrimSpace(t.Name))
 	return slices.ContainsFunc(teams, func(u schedule.Team) bool {
 		s, err := strconv.Atoi(u.Season)
-		return err == nil && s > season
+		return err == nil && s > season && strings.ToUpper(strings.TrimSpace(u.Name)) == name
 	})
 }
 

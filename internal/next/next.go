@@ -32,7 +32,10 @@ const (
 	None = "none"
 )
 
-// MaxSimilar caps the Teams offered under a new name.
+// MaxSimilar is the most Teams offered under a new name. A coach id with
+// more Teams than that in one Session is not one person's: the league files
+// its own club Teams, from adults to under-8s, under one coach id. None of
+// those is offered.
 const MaxSimilar = 3
 
 // Lists hands over the league's whole Team list, coach ids included, as the
@@ -51,8 +54,9 @@ type Candidate struct {
 
 // Result is what GET /teams/{teamID}/next answers. Teams holds the
 // same-name Teams of the earliest later Session; Similar, only when there
-// are none, holds up to MaxSimilar Teams of that Session with the same
-// coach under another name. Neither is ever null, and no coach id is in it.
+// are none, holds that Session's Teams with the same coach under another
+// name, when there are no more than MaxSimilar. Neither is ever null, and
+// no coach id is in it.
 type Result struct {
 	Team    league.TeamSummary   `json:"team"`
 	Match   string               `json:"match"`
@@ -154,12 +158,13 @@ func (r *Resolver) Find(ctx context.Context, teamID string) (Result, error) {
 	for _, l := range similar {
 		res.Similar = append(res.Similar, l.TeamSummary)
 	}
+	if len(res.Similar) > MaxSimilar {
+		res.Similar = []league.TeamSummary{}
+		return res, nil
+	}
 	slices.SortFunc(res.Similar, func(a, b league.TeamSummary) int {
 		return cmp.Or(strings.Compare(a.Name, b.Name), strings.Compare(a.ID, b.ID))
 	})
-	if len(res.Similar) > MaxSimilar {
-		res.Similar = res.Similar[:MaxSimilar]
-	}
 	return res, nil
 }
 

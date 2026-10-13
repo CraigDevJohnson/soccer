@@ -162,7 +162,6 @@ func TestFind(t *testing.T) {
 		{
 			name: "none, with the coach's Teams under new names",
 			teams: []league.Listed{
-				listed("211114", "ZEBRAS", open175, "900001"),
 				listed("211113", "ROVERS FC", mens175, "900001"),
 				listed("211112", "MIDDLES", open175, "900001"),
 				listed("211111", "ALPHAS", open175, "900001"),
@@ -172,6 +171,17 @@ func TestFind(t *testing.T) {
 			},
 			oneDay: []string{cup174.ID},
 			match:  None, want: []team{}, similar: []string{"211111", "211112", "211113"},
+		},
+		{
+			// The league's own club Teams share one coach id.
+			name: "none, and a coach id on more Teams than MaxSimilar offers none",
+			teams: []league.Listed{
+				listed("211114", "ZEBRAS", open175, "900001"),
+				listed("211113", "ROVERS FC", mens175, "900001"),
+				listed("211112", "MIDDLES", open175, "900001"),
+				listed("211111", "ALPHAS", open175, "900001"),
+			},
+			match: None, want: []team{},
 		},
 		{
 			name: "none, and no similar Teams without a coach",

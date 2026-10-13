@@ -701,6 +701,23 @@ func TestNoSessionNoticeWhenTheLinkHoldsALaterSession(t *testing.T) {
 	}
 }
 
+// A later Session's Team under another name is someone else's Team, so the
+// ended Team still gets its notice, and both stay in after.
+func TestSessionNoticeBesideAnotherTeamsLaterSession(t *testing.T) {
+	teams := sessionTeams{
+		"111111": {Name: "ROVERS", Season: "173", Division: league.Division{ID: "d1"}, Games: weekly("r", at(4, 19), 8)},
+		"211112": {Name: "KICKERS", Season: "175", Division: league.Division{ID: "d2"}, Games: weekly("n", at(25, 19), 8)},
+	}
+	h, _ := newHandler(teams, fakeDirectory{})
+	r := h.Router()
+	created := decode[struct{ Token string }](t, do(t, r, "POST", "/links", `{"team_ids":["111111","211112"],"since":"2026-08-01T00:00:00Z"}`))
+	body := strings.ReplaceAll(do(t, r, "GET", "/links/"+created.Token, "").Body.String(), "\r\n ", "")
+	if !strings.Contains(body, "UID:session-over-111111@") || strings.Count(body, "session-over-") != 1 ||
+		!strings.Contains(body, "URL:https://example.test/soccer?after=111111&after=211112\r\n") {
+		t.Fatalf("want one notice for 111111 passing on both Teams:\n%s", body)
+	}
+}
+
 // gatedDivisions answers only once n lookups are waiting at the same time,
 // so lookups made one after another fail. It counts lookups by division and
 // keeps the deadline they were given.
