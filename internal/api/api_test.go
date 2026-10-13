@@ -771,3 +771,50 @@ func TestSessionNoticesLookDivisionsUpTogether(t *testing.T) {
 		t.Fatalf("lookups had until %v, want at most %v", divisions.deadline, noticeBudget)
 	}
 }
+
+// divisionFunc is a DivisionSeasons made of one function.
+type divisionFunc func(ctx context.Context, id string) (league.DivisionSeason, error)
+
+func (f divisionFunc) DivisionSeason(ctx context.Context, id string) (league.DivisionSeason, error) {
+	return f(ctx, id)
+}
+
+// The notice lookups end noticeHeadroom before the request's own deadline
+// when that comes first, so a slow Team read cannot push the calendar past
+// the site's wait. With no time left, a cached division still answers.
+func TestNoticeLookupsStopBeforeTheRequestDeadline(t *testing.T) {
+	var got time.Time
+	h := &Handler{
+		Divisions: divisionFunc(func(ctx context.Context, id string) (league.DivisionSeason, error) {
+			got, _ = ctx.Deadline()
+			return league.DivisionSeason{ID: id, NumGames: 8}, nil
+		}),
+		Log: slog.New(slog.NewJSONHandler(io.Discard, nil)),
+	}
+	end := time.Now().Add(4 * time.Second)
+	ctx, cancel := context.WithDeadline(context.Background(), end)
+	defer cancel()
+	if found := h.lookUpDivisions(ctx, []string{"d1"}); len(found) != 1 {
+		t.Fatalf("found = %v", found)
+	}
+	if want := end.Add(-noticeHeadroom); !got.Equal(want) {
+		t.Fatalf("lookups had until %v, want %v", got, want)
+	}
+
+	cache := league.NewDivisionCache(divisionFunc(func(ctx context.Context, id string) (league.DivisionSeason, error) {
+		if err := ctx.Err(); err != nil {
+			return league.DivisionSeason{}, err
+		}
+		return league.DivisionSeason{ID: id, NumGames: 8}, nil
+	}))
+	if _, err := cache.DivisionSeason(context.Background(), "d1"); err != nil {
+		t.Fatal(err)
+	}
+	h.Divisions = cache
+	late, cancel := context.WithDeadline(context.Background(), time.Now().Add(time.Second))
+	defer cancel()
+	found := h.lookUpDivisions(late, []string{"d1", "d2"})
+	if _, ok := found["d1"]; !ok || len(found) != 1 {
+		t.Fatalf("with no time left, found = %v, want only the cached d1", found)
+	}
+}

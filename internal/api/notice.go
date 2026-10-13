@@ -28,6 +28,12 @@ const quietAfter = 8 * 24 * time.Hour
 // this time rather than making the whole calendar late.
 const noticeBudget = 3 * time.Second
 
+// noticeHeadroom is how long before the request's own deadline the
+// division lookups stop, however much of noticeBudget is left. The site
+// gives up a second before that deadline, and the calendar still has to be
+// written and sent, so a slow Team read leaves less time for the notices.
+const noticeHeadroom = 2 * time.Second
+
 // sessionNotices returns one notice for each Team in a Session link whose
 // Session is over, in link order. A Session link is good for one Session:
 // the notice says so and links to the site's Let's Plan Soccer page with the
@@ -35,12 +41,14 @@ const noticeBudget = 3 * time.Second
 // and get a new link. The link itself never follows a Team into its next
 // Session.
 //
-// A Team whose link also holds a Team of a later Session gets no notice and
-// is not passed on as "after": the calendar does get next Session's games,
-// from that Team, and the person chose it already.
+// A Team whose link also holds a Team by the same name in a later Session
+// gets no notice and is not passed on as "after": the calendar does get
+// next Session's games, from that Team, and the person chose it already.
 //
 // A division is looked up only once every game a Team has is past, each
-// division once, at most four at a time and within noticeBudget. When the
+// division once, at most four at a time, within noticeBudget and ending
+// noticeHeadroom before the request's deadline. A division already cached
+// still answers when that time is up. When the
 // lookup fails the notice is left out this time and a later fetch adds it;
 // the calendar still answers, since its games are all there.
 func (h *Handler) sessionNotices(ctx context.Context, s schedule.Schedule, linkTeamIDs []string) []calendar.Notice {
@@ -106,7 +114,11 @@ func (h *Handler) sessionNotices(ctx context.Context, s schedule.Schedule, linkT
 // lookUpDivisions returns the divisions the league answered for, by ID,
 // leaving out (with a warning line) any it failed for.
 func (h *Handler) lookUpDivisions(ctx context.Context, ids []string) map[string]league.DivisionSeason {
-	ctx, cancel := context.WithTimeout(ctx, noticeBudget)
+	until := time.Now().Add(noticeBudget)
+	if d, ok := ctx.Deadline(); ok && d.Add(-noticeHeadroom).Before(until) {
+		until = d.Add(-noticeHeadroom)
+	}
+	ctx, cancel := context.WithDeadline(ctx, until)
 	defer cancel()
 	found := make([]league.DivisionSeason, len(ids))
 	errs := make([]error, len(ids))
