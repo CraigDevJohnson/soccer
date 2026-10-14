@@ -63,9 +63,9 @@ run "each_role_reaches_only_its_own_deployment" {
   assert {
     condition = alltrue([for env, policy in aws_iam_role_policy.deployer : alltrue([
       for statement in jsondecode(policy.policy).Statement :
-      statement.Resource != ["*"] || statement.Action == ["cloudwatch:DescribeAlarms"]
+      statement.Resource != ["*"] || contains([["cloudwatch:DescribeAlarms"], ["logs:DescribeLogGroups"]], statement.Action)
     ])])
-    error_message = "Only DescribeAlarms, whose settings hold no secrets, is granted on every resource."
+    error_message = "Only DescribeAlarms and DescribeLogGroups, whose settings hold no secrets, are granted on every resource."
   }
   assert {
     condition = alltrue([for env, policy in aws_iam_role_policy.deployer : alltrue([

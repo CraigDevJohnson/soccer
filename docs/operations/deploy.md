@@ -22,7 +22,7 @@ To deploy `main` again without a push (after the one-time setup, or after a fail
 
 ### Approving production
 
-When a `Deploy` run reaches the production job, it pauses: GitHub emails Craig and shows "Review deployments" at the top of the run. Read dev's plan summary on the same run, then approve or reject. Production gets the same change only when it was in step with dev before this run: if an earlier run's production job was rejected or failed, production also gets that run's commits, and their changes are in that run's dev summary. Rejecting ends the run with dev deployed and production untouched. That approval is the approved change aws-design.md G11 asks for; nobody else can give it.
+When a `Deploy` run reaches the production job, it pauses: GitHub emails Craig and shows "Review deployments" at the top of the run. Read dev's plan summary on the same run, then approve or reject. Production gets the same change only when it was in step with dev before this run: if an earlier run's production job was rejected or failed, production also gets that run's commits, and their changes are in that run's dev summary. A run whose commit `main` has since moved past, with newer changes to what is deployed, stops at "Check main has not moved on" in each job instead of deploying, so approving an old run, or re-running one, never rolls an environment back; the newer commit's own run deploys it. Rejecting ends the run with dev deployed and production untouched. That approval is the approved change aws-design.md G11 asks for; nobody else can give it.
 
 ### Rolling back
 

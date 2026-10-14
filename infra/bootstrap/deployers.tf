@@ -183,12 +183,19 @@ resource "aws_iam_role_policy" "deployer" {
         ]
         Resource = [each.value.log_groups]
       },
-      # Describe calls return names and settings, never log lines; AWS
-      # evaluates DescribeLogGroups against every log group in the Region.
+      # Describe calls return names and settings, never log lines.
+      # DescribeLogGroups takes no resource, so AWS documents it as needing
+      # "*"; it reaches no further than every log group in the Region.
+      {
+        Sid      = "LogGroupList"
+        Effect   = "Allow"
+        Action   = ["logs:DescribeLogGroups"]
+        Resource = ["*"]
+      },
       {
         Sid      = "LogGroupRead"
         Effect   = "Allow"
-        Action   = ["logs:DescribeLogGroups", "logs:DescribeMetricFilters"]
+        Action   = ["logs:DescribeMetricFilters"]
         Resource = ["arn:aws:logs:${var.region}:${var.account_id}:log-group:*"]
       },
 
