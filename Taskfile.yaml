@@ -112,8 +112,9 @@ tasks:
         msg: "No dist/soccer.zip: run task lambda, or task infra:plan, which builds it"
     cmds:
       # The zip's path is relative to infra/ and goes into the state, so a plan
-      # here and one in the Deploy workflow agree on it.
-      - '{{.TOFU}} -chdir=infra plan -input=false -var-file=environments/{{.ENV}}.tfvars -var "package_path=../dist/soccer.zip" -out=soccer.{{.ENV}}.tfplan'
+      # here and one in the Deploy workflow agree on it. A plan or apply that
+      # finds the state locked (by a run elsewhere) waits for it a while.
+      - '{{.TOFU}} -chdir=infra plan -input=false -lock-timeout=5m -var-file=environments/{{.ENV}}.tfvars -var "package_path=../dist/soccer.zip" -out=soccer.{{.ENV}}.tfplan'
 
   infra:apply:
     desc: Apply the plan infra:plan wrote for ENV (default dev), exactly as reviewed (an approved change)
@@ -122,7 +123,7 @@ tasks:
       - sh: test -f infra/soccer.{{.ENV}}.tfplan
         msg: "No infra/soccer.{{.ENV}}.tfplan: run task infra:plan ENV={{.ENV}} and review it first"
     cmds:
-      - '{{.TOFU}} -chdir=infra apply -input=false soccer.{{.ENV}}.tfplan'
+      - '{{.TOFU}} -chdir=infra apply -input=false -lock-timeout=5m soccer.{{.ENV}}.tfplan'
 
   infra:smoke:
     desc: Check the ENV deployment answers through its site and refuses unsigned calls (after an apply)

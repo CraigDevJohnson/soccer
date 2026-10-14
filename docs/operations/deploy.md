@@ -16,7 +16,7 @@ GitHub Actions deploys both. A computer is used only to test a change, and once,
    - Straight at the Function URL, an unsigned `GET /healthz` must answer `403`.
 3. **Deploy production,** after Craig approves it. Only after dev succeeded. The job waits for approval, then does the same against `prod` as `soccer-deployer-prod`, with the same zip, and runs the same checks against the production site.
 
-One build, deployed in order: what reaches production is byte for byte what ran on dev. Two deploys of the same environment never overlap; a second run waits and is never cancelled part-way through an apply. The same source and Go toolchain always give the same zip (the build strips paths and commit stamps, and the archive carries a fixed time and mode), so a run whose Go code did not change plans `No changes.` for the function.
+One build, deployed in order: what reaches production is byte for byte what ran on dev. Two deploys of the same environment never overlap; a second run waits and is never cancelled part-way through an apply. A plan or apply that finds the state locked, by a plan on a computer for example, waits up to five minutes for the lock. The same source and Go toolchain always give the same zip (the build strips paths and commit stamps, and the archive carries a fixed time and mode), so a run whose Go code did not change plans `No changes.` for the function.
 
 To deploy `main` again without a push (after the one-time setup, or after a failed run), open Actions, choose `Deploy`, press "Run workflow" on `main`. Runs from any other branch or tag do nothing.
 
@@ -137,7 +137,7 @@ Done once, before the first cloud deploy, on a computer with OpenTofu 1.13 or ne
 
 6. **Deploy.** Merge to `main`, or run `Deploy` by hand (Actions, `Deploy`, "Run workflow" on `main`). Dev deploys by itself; approve production when the run asks.
 
-The first cloud deploy of each environment also puts its function's role inside its boundary (`aws_iam_role.server` changes in place); that is the only change the move to Actions makes to a deployment.
+The first cloud deploy of each environment ships whatever `main` holds that was not applied yet, and also puts its function's role inside its boundary (`aws_iam_role.server` changes in place); the boundary is the only change the move to Actions itself makes to a deployment.
 
 ## Testing on a computer
 
@@ -176,4 +176,4 @@ Lambda stays well inside the free tier at this use. The two alarms are about $0.
 
 ## Evidence limits
 
-`task ci` runs the Go tests and the OpenTofu tests against a mocked provider: names, the IAM-only URL, the two permissions, the logs-only policy, the environment, the alarms, the input checks, and the deploy roles' trust and policy. None of it calls AWS, so whether the deploy role's policy covers every call an apply makes is proven only by the first `Deploy` run of each environment; a missing permission fails that run's plan or apply with `AccessDenied`, naming the action, and changes nothing else. The smoke test proves the site reaches the backend and that unsigned calls are refused, not that the league answers. The league alarm has not fired until the league fails; `aws cloudwatch set-alarm-state --alarm-name soccer-dev-server-league-unavailable --state-value ALARM --state-reason test --region us-west-2` proves the email path, and the alarm returns to OK by itself.
+`task ci` runs the Go tests and the OpenTofu tests against a mocked provider: names, the IAM-only URL, the two permissions, the logs-only policy, the environment, the alarms, the input checks, and the deploy roles' trust and policy. None of it calls AWS, so whether the deploy role's policy covers every call an apply makes is proven only by the first `Deploy` run of each environment; a missing permission fails that run's plan or apply with `AccessDenied`, naming the action. A plan that fails changes nothing; an apply that fails part-way keeps what it changed before the error, and the next run after the fix finishes the rest. The smoke test proves the site reaches the backend and that unsigned calls are refused, not that the league answers. The league alarm has not fired until the league fails; `aws cloudwatch set-alarm-state --alarm-name soccer-dev-server-league-unavailable --state-value ALARM --state-reason test --region us-west-2` proves the email path, and the alarm returns to OK by itself.
