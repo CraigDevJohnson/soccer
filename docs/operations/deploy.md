@@ -1,151 +1,179 @@
 # Deploying the backend
 
-The Let's Plan Soccer page (`/soccer` in [the-lobby](https://github.com/CraigDevJohnson/the-lobby)) calls this backend through a Lambda Function URL that accepts only the site's own role, with requests the site signs (the-lobby ADR 0006). `infra/` is the OpenTofu for one such deployment, and there is one deployment per site environment (dev, and production), chosen with `ENV` on the `task infra:*` commands (default `dev`). Each is named for the site environment it serves, `soccer-<site_environment>-server`, because the site's permissions boundary lets its role call only backends named `*-<environment>-*`, and each has its own state, private inputs and plan file. Nothing here is public: there is no API Gateway, no custom domain and no unsigned path in.
+The Let's Plan Soccer page (`/soccer` in [the-lobby](https://github.com/CraigDevJohnson/the-lobby)) calls this backend through a Lambda Function URL that accepts only the site's own role, with requests the site signs (the-lobby ADR 0006). `infra/` is the OpenTofu for one such deployment, and there is one deployment per site environment: `dev` for `dev.craigdevjohnson.com` and `prod` for the production site. Each is named for the site environment it serves, `soccer-<site_environment>-server`, because the site's permissions boundary lets its role call only backends named `*-<environment>-*`, and each has its own state, inputs and plan file. Nothing here is public: there is no API Gateway, no custom domain and no unsigned path in.
 
-## What it creates
+GitHub Actions deploys both. A computer is used only to test a change, and once, to make the roles GitHub signs in with.
+
+## How a change gets deployed
+
+**On a pull request,** the `CI` workflow runs `task ci`: gofmt, vet, the Go tests, the Lambda build, and the OpenTofu checks for both roots against a mocked provider. It has no secrets and no cloud role, so it cannot touch AWS. Nothing is planned on a pull request.
+
+**On `main`,** a push that changes what is deployed (the Go code, `go.mod` and `go.sum`, `infra/` other than its tests and `infra/bootstrap`, `scripts/smoke.sh`, `Taskfile.yaml` or the workflow itself) starts the `Deploy` workflow. A change to docs alone deploys nothing.
+
+1. **Build,** once. The Go tests run, `task lambda` makes `dist/soccer.zip`, and the zip is kept as a workflow artifact named after the commit.
+2. **Deploy dev,** with no approval. The job signs in to AWS as `soccer-deployer-dev` through GitHub OIDC, runs `task infra:init` and plans with the build's zip (`task infra:plan:zip`), then applies that exact plan (`task infra:apply`). The plan's resource lines and totals are on the run's summary page, and the full plan is in the log; the backend has no secrets, so neither shows anything private. Then `task infra:smoke` runs two checks:
+   - Through the site, `https://dev.craigdevjohnson.com/soccer/link/deploy-check.ics` must answer `404` with `invalid_link`. The site only checks a token's shape, so that answer came from this backend, over the site's signed call, and the league was never asked.
+   - Straight at the Function URL, an unsigned `GET /healthz` must answer `403`.
+3. **Deploy production,** after Craig approves it. Only after dev succeeded. The job waits for approval, then does the same against `prod` as `soccer-deployer-prod`, with the same zip, and runs the same checks against the production site.
+
+One build, deployed in order: what reaches production is byte for byte what ran on dev. Two deploys of the same environment never overlap; a second run waits and is never cancelled part-way through an apply. The same source and Go toolchain always give the same zip (the build strips paths and commit stamps, and the archive carries a fixed time and mode), so a run whose Go code did not change plans `No changes.` for the function.
+
+To deploy `main` again without a push (after the one-time setup, or after a failed run), open Actions, choose `Deploy`, press "Run workflow" on `main`. Runs from any other branch or tag do nothing.
+
+### Approving production
+
+When a `Deploy` run reaches the production job, it pauses: GitHub emails Craig and shows "Review deployments" at the top of the run. Read dev's plan summary on the same run, since production gets the same change, then approve or reject. Rejecting ends the run with dev deployed and production untouched. That approval is the approved change aws-design.md G11 asks for; nobody else can give it.
+
+### Rolling back
+
+Revert the commit on `main` and push. The workflow builds the reverted code, deploys dev and waits for approval for production, like any other change, and `main` stays in step with what is deployed.
+
+## What GitHub holds
+
+No AWS keys and no secrets. Each deploy job signs in with a token GitHub issues for that one run, and each role trusts only jobs in its own environment of this repository.
+
+| Name | Kind | What it is |
+|---|---|---|
+| `dev` | environment | Deployment branches: `main` only. No reviewers |
+| `production` | environment | Deployment branches: `main` only. Required reviewer: Craig |
+| `AWS_DEV_DEPLOYER_ROLE_ARN` | variable in `dev` | `arn:aws:iam::793680745829:role/soccer-deployer-dev` |
+| `AWS_PROD_DEPLOYER_ROLE_ARN` | variable in `production` | `arn:aws:iam::793680745829:role/soccer-deployer-prod` |
+
+Each variable is set in its environment only, never for the whole repository. GitHub creates an environment a workflow names if it does not exist yet, with no protection; such an environment has no variable, so a deploy job in it stops at its first step ("Check the environment was set up") and never signs in.
+
+## What a deployment creates
 
 | Resource | Name | Why |
 | --- | --- | --- |
-| Lambda function | `soccer-dev-server` | The Go server from `task lambda`, `provided.al2023` on arm64, 256 MB, 10-second timeout, with `LINK_BASE_URL` and the optional `LEAGUE_*` settings from the README |
+| Lambda function | `soccer-<env>-server` | The Go server from `task lambda`, `provided.al2023` on arm64, 256 MB, 10-second timeout, with `LINK_BASE_URL` and the optional `LEAGUE_*` settings from the README |
 | Function URL | on the function | `AWS_IAM` auth; the site's `SOCCER_BACKEND_URL` |
 | Two function permissions | `AllowSiteThroughFunctionUrl`, `AllowSiteInvokeThroughFunctionUrl` | `lambda:InvokeFunctionUrl` and `lambda:InvokeFunction` for the site's role alone, the second only through the URL |
-| IAM role and inline policy | `soccer-dev-server`, `logs` | Lambda's execution role; it may write its own log group and nothing else |
-| Log group | `/aws/lambda/soccer-dev-server` | The code's JSON log lines, kept 30 days |
-| Metric filter and alarm | `soccer-dev-server-league-unavailable` | Counts the code's `league_unavailable` lines and emails on the first in any five minutes |
-| Alarm | `soccer-dev-server-failing` | Lambda errors: a crash or a run that hit the timeout |
+| IAM role and inline policy | `soccer-<env>-server`, `logs` | Lambda's execution role, inside `soccer-server-boundary-<env>`; it may write its own log group and nothing else |
+| Log group | `/aws/lambda/soccer-<env>-server` | The code's JSON log lines, kept 30 days |
+| Metric filter and alarm | `soccer-<env>-server-league-unavailable` | Counts the code's `league_unavailable` lines and emails on the first in any five minutes |
+| Alarm | `soccer-<env>-server-failing` | Lambda errors: a crash or a run that hit the timeout |
 
-The site's role is the only principal the function grants a call to. AWS also lets a principal in the same account call the URL when its own identity policy allows `lambda:InvokeFunctionUrl` and `lambda:InvokeFunction`; the account's workload roles carry neither (aws-design G7), and the administrator profile does, which step 6 uses. Unsigned requests get a 403.
+The inputs are committed, one file each per deployment: `infra/environments/<env>.tfvars` (the account, the site's role, where the site serves Session links, the alerts topic, the boundary and the site's cost tag) and `infra/environments/<env>.tfbackend` (the state, in the site's state bucket under `soccer/<env>/terraform.tfstate`, with the bucket's native lock file). None of it is secret, and keeping it in Git means a deploy can never undo a value only one computer knew. When the production site moves to `craigdevjohnson.com`, change `link_base_url` in `prod.tfvars` and merge: the function's environment changes, nothing else.
 
-Both alarms notify the workloads account's existing `alerts` topic in us-west-2, which already lets CloudWatch publish and emails Craig (aws-setup `aws-design.md`, section 7). There is no new topic and no subscription to confirm. Every resource carries `project = soccer` and the tags in `tags` (aws-design G10).
+The site's role is the only principal the function grants a call to. AWS also lets a principal in the same account call the URL when its own identity policy allows `lambda:InvokeFunctionUrl` and `lambda:InvokeFunction`; the account's workload roles and the deploy roles carry neither (aws-design G7), and the administrator profile does. Unsigned requests get a 403.
 
-## Before you start
+Both alarms notify the workloads account's existing `alerts` topic in us-west-2, which already lets CloudWatch publish and emails Craig (aws-setup `aws-design.md`, section 7). Every resource carries `project = soccer` and the tags in `tags` (aws-design G10).
 
-On the Mac: OpenTofu 1.13 or newer, [Task](https://taskfile.dev), Go (the version in `go.mod`), `zip`, and the AWS CLI with the `workloads-admin` profile from aws-setup. The site's dev environment must already be deployed, because the Function URL is granted to its role, `site-dev-server`. `git pull` on `main` first.
+## The deploy roles
 
-`task ci` runs everything the pull-request checks run, including the offline OpenTofu tests, and needs no credentials.
+`infra/bootstrap` is a second OpenTofu root, applied by hand with the administrator profile, because the roles it makes are what the workflow signs in as. Its state is `soccer/bootstrap/terraform.tfstate` in the same bucket. Per deployment it makes:
 
-## Deploy
+- **`soccer-deployer-<env>`,** trusted only by GitHub's OIDC token for a job in this repository's `dev` or `production` environment (the exact `aud` and `sub`; the repository uses GitHub's immutable subject, `repo:CraigDevJohnson@42454849/soccer@1412575682:environment:<name>`). Its one inline policy allows what an apply of `infra/` needs and no more: its own state key and lock file, and the function, log group, metric filter, alarms and role named `soccer-<env>-*`. Reads are pinned to the same names wherever AWS allows it, so it cannot read another app's state, settings or secrets. Three conditions keep the backend private whatever a commit says: a Function URL can only be created or changed with `AWS_IAM` auth, a call to the function can only be granted to `site-<env>-server`, and a role can only be created, given a policy or given a boundary while it carries the boundary below, which can never be taken off. The deploy role is named outside `soccer-<env>-*`, so it cannot change itself.
+- **`soccer-server-boundary-<env>`,** the permissions boundary on the function's role: at most, write the deployment's own logs.
 
-Everything below runs in `/Users/craigjohnson/Projects/soccer`. Only step 5 changes AWS, and it runs only after you have approved that plan (aws-design G11). Check each output against what is shown before going on. The shell variables carry over from step to step, so use one terminal.
+`task infra:check` tests all of this offline (`infra/bootstrap/tests`).
 
-1. **Sign in and read the account.**
+## One-time setup
+
+Done once, before the first cloud deploy, on a computer with OpenTofu 1.13 or newer, [Task](https://taskfile.dev), the AWS CLI with the `workloads-admin` profile from aws-setup, and the GitHub CLI signed in as Craig. Only step 4 changes AWS, and it runs only after the plan in step 3 is approved (aws-design G11). Run everything in the soccer checkout, on `main` after `git pull`, in one terminal.
+
+1. **Sign in.**
 
    ```sh
    export AWS_PROFILE=workloads-admin
    aws sso login
-   account=$(aws sts get-caller-identity --query Account --output text); echo "$account"
+   aws sts get-caller-identity --query Account --output text
    ```
 
-   `aws sso login` opens the browser for the Identity Center approval and prints `Successfully logged into Start URL: …`. The last line prints the 12-digit workloads account id.
+   `aws sso login` opens the browser for the Identity Center approval and prints `Successfully logged into Start URL: …`. The last line prints `793680745829`.
 
-2. **Point the root at its state.** The state lives in the bucket the site's own roots use (the-lobby `infra/README.md`), under its own key, `soccer/dev/terraform.tfstate`, with the bucket's native lock file.
+2. **Check the repository's OIDC subject.**
 
    ```sh
-   bucket=$(aws s3api list-buckets --query "Buckets[?starts_with(Name,'craigdevjohnson-tofu-state')].Name" --output text); echo "$bucket"
-   sed "s/example-replace-with-the-private-state-bucket/$bucket/" infra/backend.hcl.example > infra/backend.dev.hcl
-   task infra:init
+   gh api repos/CraigDevJohnson/soccer/actions/oidc/customization/sub
    ```
 
-   The first line prints exactly one bucket name; if it prints nothing or two names, stop. `task infra:init` prints `Successfully configured the backend "s3"!`, the provider install, and ends with `OpenTofu has been successfully initialized!`. `infra/backend.dev.hcl` is gitignored, and so is the provider cache the init writes, `infra/.terraform.dev`.
+   It prints the repository's subject settings; `use_immutable_subject` must be `true`, as it is for the-lobby, minecraft and foundry. If it is not, stop: the roles would trust a subject GitHub never issues for this repository.
 
-   A checkout that deployed before the `ENV` switch (October 2026) has `infra/backend.hcl` and `infra/deployment.tfvars` instead: rename them to `backend.dev.hcl` and `deployment.dev.tfvars` and run `task infra:init` again. The state is in the bucket, so nothing else changes.
-
-3. **Write the private inputs.** Read the site's role and the alerts topic:
+3. **Plan the roles.**
 
    ```sh
-   site_role=$(aws iam list-roles --query "Roles[?RoleName=='site-dev-server'].Arn" --output text); echo "$site_role"
-   topic=$(aws sns list-topics --region us-west-2 --query "Topics[?contains(TopicArn,'alerts')].TopicArn" --output text); echo "$topic"
+   task infra:bootstrap:init
+   task infra:bootstrap:plan
    ```
 
-   The first prints `arn:aws:iam::<account>:role/site-dev-server`, the second `arn:aws:sns:us-west-2:<account>:alerts`, one line each. Then write the file (gitignored) and read it back:
+   The init prints `Successfully configured the backend "s3"!` and ends with `OpenTofu has been successfully initialized!`. The plan reads the account's GitHub OIDC provider, then ends in `Plan: 6 to add, 0 to change, 0 to destroy.`: `aws_iam_policy.server_boundary["dev"]` and `["prod"]`, `aws_iam_role.deployer["dev"]` and `["prod"]`, and `aws_iam_role_policy.deployer["dev"]` and `["prod"]`. Anything else is a stop condition. The plan is saved as `infra/bootstrap/bootstrap.tfplan` (gitignored).
+
+4. **Apply** the plan you approved.
 
    ```sh
-   cat > infra/deployment.dev.tfvars <<EOF
-   account_id       = "$account"
-   site_environment = "dev"
-   site_role_arn    = "$site_role"
-   link_base_url    = "https://dev.craigdevjohnson.com/soccer/link/"
-   alert_topic_arn  = "$topic"
-   tags             = { Site = "craigdevjohnson.com" }
+   task infra:bootstrap:apply
+   ```
+
+   This prints a `Creation complete` line per resource and ends with `Apply complete! Resources: 6 added, 0 changed, 0 destroyed.`, then the outputs: `deployer_role_arns` (`dev` and `prod`, `arn:aws:iam::793680745829:role/soccer-deployer-<env>`) and `server_boundary_arns`.
+
+5. **Make the GitHub environments.** The `dev` environment, deployable from `main` only, with its role:
+
+   ```sh
+   gh api -X PUT repos/CraigDevJohnson/soccer/environments/dev --input - <<'EOF'
+   {"deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}}
    EOF
-   cat infra/deployment.dev.tfvars
+   gh api -X POST repos/CraigDevJohnson/soccer/environments/dev/deployment-branch-policies -f name=main -f type=branch
+   gh variable set AWS_DEV_DEPLOYER_ROLE_ARN --env dev --repo CraigDevJohnson/soccer --body arn:aws:iam::793680745829:role/soccer-deployer-dev
    ```
 
-   Every value must be filled in; an empty `""` means a lookup above printed nothing. `link_base_url` is where the dev site serves Session links, so the backend's `POST /links` answers with addresses on the site. `Site` is the-lobby's cost tag, so the site's $5 budget covers this backend. The league settings stay at the code's defaults (Boise); `infra/deployment.tfvars.example` shows how to set them.
-
-4. **Plan.**
+   The `production` environment, the same with Craig as its required reviewer (`42454849` is his GitHub user id):
 
    ```sh
-   task infra:plan
+   gh api -X PUT repos/CraigDevJohnson/soccer/environments/production --input - <<'EOF'
+   {"reviewers": [{"type": "User", "id": 42454849}], "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}}
+   EOF
+   gh api -X POST repos/CraigDevJohnson/soccer/environments/production/deployment-branch-policies -f name=main -f type=branch
+   gh variable set AWS_PROD_DEPLOYER_ROLE_ARN --env production --repo CraigDevJohnson/soccer --body arn:aws:iam::793680745829:role/soccer-deployer-prod
    ```
 
-   This builds `dist/soccer.zip` (it prints the zip's `ls -l` line), then plans. Expect creates only, ending in `Plan: 10 to add, 0 to change, 0 to destroy.`: `aws_cloudwatch_log_group.server`, `aws_iam_role.server`, `aws_iam_role_policy.server`, `aws_lambda_function.server`, `aws_lambda_function_url.server`, `aws_lambda_permission.site_url`, `aws_lambda_permission.site_invoke`, `aws_cloudwatch_log_metric_filter.league_unavailable`, `aws_cloudwatch_metric_alarm.league_unavailable` and `aws_cloudwatch_metric_alarm.failing`. Any change or destroy, or a resource not on that list, is a stop condition. The plan is saved as `infra/soccer.dev.tfplan` (gitignored), and that exact plan is what the next step applies.
-
-5. **Apply** the plan you reviewed and approved.
+   Each `PUT` prints the environment as JSON, each `POST` prints `{"id":…,"node_id":…,"name":"main","type":"branch"}`, and each `gh variable set` prints `✓ Created variable … for CraigDevJohnson/soccer`. The same can be done under Settings, Environments. Then check both:
 
    ```sh
-   task infra:apply
+   gh api repos/CraigDevJohnson/soccer/environments --jq '.environments[] | {name, rules: [.protection_rules[].type]}'
    ```
 
-   This prints a `Creating...` and `Creation complete` line per resource and ends with `Apply complete! Resources: 10 added, 0 changed, 0 destroyed.` followed by the outputs: `function_arn`, `function_name`, `function_url` and `log_group_name`.
+   This prints `{"name":"dev","rules":["branch_policy"]}` and `{"name":"production","rules":["required_reviewers","branch_policy"]}`. Production without `required_reviewers` would deploy without asking; fix it before going on.
 
-6. **Check it from the Mac.**
+6. **Deploy.** Merge to `main`, or run `Deploy` by hand (Actions, `Deploy`, "Run workflow" on `main`). Dev deploys by itself; approve production when the run asks.
 
-   ```sh
-   url=$(TF_DATA_DIR="$PWD/infra/.terraform.dev" tofu -chdir=infra output -raw function_url); echo "$url"
-   curl -sS -o /dev/null -w '%{http_code}\n' "${url%/}/healthz"
-   ```
+The first cloud deploy of each environment also puts its function's role inside its boundary (`aws_iam_role.server` changes in place); that is the only change the move to Actions makes to a deployment.
 
-   This prints the address, `https://<id>.lambda-url.us-west-2.on.aws/`, then `403`: an unsigned call is refused. A bare `tofu` command needs `TF_DATA_DIR` on its command line like that to read this deployment's cache (`task` passes it by itself); do not `export` it, because an exported value would override the `ENV` of every later `task infra:*` command. Your administrator role may call the address, so sign one:
+## Testing on a computer
 
-   ```sh
-   eval "$(aws configure export-credentials --profile workloads-admin --format env)"
-   curl -sS -o /dev/null -w '%{http_code}\n' --aws-sigv4 "aws:amz:us-west-2:lambda" \
-     --user "$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY" -H "x-amz-security-token: $AWS_SESSION_TOKEN" \
-     "${url%/}/healthz"
-   curl -sS --aws-sigv4 "aws:amz:us-west-2:lambda" \
-     --user "$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY" -H "x-amz-security-token: $AWS_SESSION_TOKEN" \
-     "${url%/}/divisions" | head -c 200; echo
-   ```
-
-   This prints `204`, then the start of `{"divisions":[{"id":"…","name":"…"`: the function reached the league and read this week's divisions at Boise. The exported credentials expire with the SSO session.
-
-7. **Connect the site** in the-lobby: give its function `SOCCER_BACKEND_URL` set to `$url` and `SOCCER_BACKEND_SIGNING=lambda`, and let `site-dev-server` call `lambda:InvokeFunctionUrl` and `lambda:InvokeFunction` on `TF_DATA_DIR="$PWD/infra/.terraform.dev" tofu -chdir=infra output -raw function_arn` (its boundary already allows `*-dev-*`). Until then `/soccer` says the backend is not answering.
-
-## Production
-
-The production site (`next.craigdevjohnson.com` until the switch to `craigdevjohnson.com`, the-lobby `docs/baseline.md`) gets its own deployment, `soccer-prod-server`, from the same steps with `ENV=prod`. Its site must already be deployed, because the Function URL is granted to `site-prod-server`.
+The same tasks run on a computer with the administrator profile, to see what a change would do before it merges. Sign in as in step 1 above, then:
 
 ```sh
-sed "s/example-replace-with-the-private-state-bucket/$bucket/; s#soccer/dev/#soccer/prod/#" infra/backend.hcl.example > infra/backend.prod.hcl
-task infra:init ENV=prod
-site_role=$(aws iam list-roles --query "Roles[?RoleName=='site-prod-server'].Arn" --output text); echo "$site_role"
-cat > infra/deployment.prod.tfvars <<EOF
-account_id       = "$account"
-site_environment = "prod"
-site_role_arn    = "$site_role"
-link_base_url    = "https://next.craigdevjohnson.com/soccer/link/"
-alert_topic_arn  = "$topic"
-tags             = { Site = "craigdevjohnson.com" }
-EOF
-task infra:plan ENV=prod
-task infra:apply ENV=prod
+task infra:init             # once per checkout; ENV=prod for production
+task infra:plan             # builds dist/soccer.zip and plans; ENV=prod for production
 ```
 
-The state key is `soccer/prod/terraform.tfstate`, the plan `infra/soccer.prod.tfplan`, and the provider cache `infra/.terraform.prod`, which a bare `tofu -chdir=infra output` reads with `TF_DATA_DIR="$PWD/infra/.terraform.prod"` in front of it, as in step 6. The plan and the checks are those of steps 4 to 6 with `prod` in every name, and the site connects the same way (step 7) in its `infra/environments/prod/prod.tfvars`. When the site switches hostname, change `link_base_url` and apply again: the function's environment changes, nothing else.
+`task infra:init` prints `Successfully configured the backend "s3"!` and ends with `OpenTofu has been successfully initialized!`; its provider cache is `infra/.terraform.<env>` (gitignored). `task infra:plan` prints the zip's `ls -l` line, then the plan, saved as `infra/soccer.<env>.tfplan`. A plan changes nothing; it only takes and releases the state lock. The zip's path in the state is relative to `infra/`, so a plan on a computer and one in the workflow do not differ over where the zip was built; on `main`, after a green `Deploy` run and with the Go version in `go.mod`, the zip is the same too and the plan reads `No changes.`
 
-## Updating the code
+Applying from a computer (`task infra:apply`, then `task infra:smoke`) is for when GitHub Actions cannot deploy, and like any apply it needs Craig's approval of that plan first. The next `Deploy` run brings the environment back to `main` either way.
 
-After a merge to `main`: `git pull`, `task infra:plan` (expect `Plan: 0 to add, 1 to change, 0 to destroy.`, the function's code), review, then `task infra:apply` once approved; then the same with `ENV=prod`. The same source and Go toolchain give the same zip (the build strips paths and commit stamps, and the archive carries a fixed time and mode), so a merge that changes no Go code plans no change.
+A bare `tofu` command needs the deployment's cache on its own command line, such as `TF_DATA_DIR="$PWD/infra/.terraform.dev" tofu -chdir=infra output -raw function_url`; do not `export` it, because an exported value would override the `ENV` of every later `task infra:*` command. A checkout that deployed before the inputs were committed has gitignored `infra/backend.<env>.hcl` and `infra/deployment.<env>.tfvars` files; they are no longer read and can be deleted.
 
-## Removing it
+To call the backend yourself, sign the request with the administrator profile:
 
-`TF_DATA_DIR="$PWD/infra/.terraform.dev" tofu -chdir=infra plan -destroy -var-file=deployment.dev.tfvars -var "package_path=$PWD/dist/soccer.zip" -out=soccer.dev.tfplan`, review, then `task infra:apply` once approved. For production, put `prod` in place of each `dev` in that plan command and apply with `task infra:apply ENV=prod`; without `ENV=prod` the apply looks for dev's plan file. The site stops answering `/soccer` at once; its own resources are untouched.
+```sh
+url=$(TF_DATA_DIR="$PWD/infra/.terraform.dev" tofu -chdir=infra output -raw function_url)
+eval "$(aws configure export-credentials --profile workloads-admin --format env)"
+curl -sS --aws-sigv4 "aws:amz:us-west-2:lambda" \
+  --user "$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY" -H "x-amz-security-token: $AWS_SESSION_TOKEN" \
+  "${url%/}/divisions" | head -c 200; echo
+```
+
+This prints the start of `{"divisions":[{"id":"…","name":"…"`: the function reached the league and read the divisions at Boise. The exported credentials expire with the SSO session.
+
+## Removing a deployment
+
+From a computer, as an approved change: `TF_DATA_DIR="$PWD/infra/.terraform.dev" tofu -chdir=infra plan -destroy -var-file=environments/dev.tfvars -var "package_path=../dist/soccer.zip" -out=soccer.dev.tfplan` (after `task lambda`), review, then `task infra:apply`; put `prod` in place of each `dev` and add `ENV=prod` for production. Remove that environment's deploy job and its `infra/environments` files in the same change, or the next `Deploy` run creates the deployment again. The site stops answering `/soccer` at once; its own resources are untouched.
 
 ## Cost
 
-Lambda stays well inside the free tier at this use. The two alarms are about $0.20 a month, and the `LeagueUnavailable` custom metric up to $0.30 a month once the account's free custom metrics are used. Logs are a few megabytes a month. About $0.50 a month at most.
+Lambda stays well inside the free tier at this use. The two alarms are about $0.20 a month per deployment, and the `LeagueUnavailable` custom metric up to $0.30 a month once the account's free custom metrics are used. Logs are a few megabytes a month. IAM roles and policies cost nothing, and the Actions minutes are free for a public repository. About $1 a month at most for both deployments.
 
 ## Evidence limits
 
-`task ci` runs the Go tests and the OpenTofu tests against a mocked provider: names, the IAM-only URL, the two permissions, the logs-only policy, the environment, the alarms and the input checks. None of it calls AWS. Before relying on it, a live check must show the site's signed call reaching the backend (step 7 and a `/soccer` search on the dev site), a Session link fetched through the site, and one alarm email. The league alarm has not fired until the league fails; `aws cloudwatch set-alarm-state --alarm-name soccer-dev-server-league-unavailable --state-value ALARM --state-reason test --region us-west-2` proves the email path, and the alarm returns to OK by itself.
+`task ci` runs the Go tests and the OpenTofu tests against a mocked provider: names, the IAM-only URL, the two permissions, the logs-only policy, the environment, the alarms, the input checks, and the deploy roles' trust and policy. None of it calls AWS, so whether the deploy role's policy covers every call an apply makes is proven only by the first `Deploy` run of each environment; a missing permission fails that run's plan or apply with `AccessDenied`, naming the action, and changes nothing else. The smoke test proves the site reaches the backend and that unsigned calls are refused, not that the league answers. The league alarm has not fired until the league fails; `aws cloudwatch set-alarm-state --alarm-name soccer-dev-server-league-unavailable --state-value ALARM --state-reason test --region us-west-2` proves the email path, and the alarm returns to OK by itself.

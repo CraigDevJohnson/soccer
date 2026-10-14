@@ -17,3 +17,8 @@ output "log_group_name" {
   description = "Where the function's JSON log lines go."
   value       = aws_cloudwatch_log_group.server.name
 }
+
+output "link_base_url" {
+  description = "Where the site serves this deployment's Session links; task infra:smoke fetches one through it."
+  value       = var.link_base_url
+}

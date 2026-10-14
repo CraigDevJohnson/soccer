@@ -42,7 +42,7 @@ variable "site_role_arn" {
 }
 
 variable "package_path" {
-  description = "The zip built by `task lambda`: one static arm64 binary named bootstrap."
+  description = "The zip built by `task lambda`: one static arm64 binary named bootstrap. The tasks pass ../dist/soccer.zip, relative to infra/, so the path kept in state is the same from every checkout."
   type        = string
 }
 
@@ -85,9 +85,13 @@ variable "alert_topic_arn" {
 }
 
 variable "permissions_boundary_arn" {
-  description = "Optional permissions boundary for the function's role, for a deployer that may only create bounded roles. The admin profile needs none."
+  description = "Permissions boundary for the function's role: soccer-server-boundary-<site_environment> from infra/bootstrap. The deploy role may only create or change the role while it carries that boundary, so every deployment in infra/environments sets it. Unset only for a deployment made with the admin profile alone."
   type        = string
   default     = null
+  validation {
+    condition     = var.permissions_boundary_arn == null || (can(regex("^arn:aws:iam::[0-9]{12}:policy/.+$", var.permissions_boundary_arn)) && try(split(":", var.permissions_boundary_arn)[4] == var.account_id, false))
+    error_message = "permissions_boundary_arn must name an IAM policy in the same account as the backend, or be unset."
+  }
 }
 
 variable "log_retention_days" {

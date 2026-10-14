@@ -1,5 +1,7 @@
-# Credentials come from the environment: AWS_PROFILE set to the workloads
-# account's admin profile after `aws sso login` (aws-setup, aws-design.md).
+# Credentials come from the environment: in the Deploy workflow, the
+# deployment's deploy role (infra/bootstrap) through GitHub OIDC; on a
+# computer, AWS_PROFILE set to the workloads account's admin profile after
+# `aws sso login` (aws-setup, aws-design.md).
 provider "aws" {
   region              = var.region
   allowed_account_ids = [var.account_id]
