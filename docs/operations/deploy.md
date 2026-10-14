@@ -22,7 +22,7 @@ To deploy `main` again without a push (after the one-time setup, or after a fail
 
 ### Approving production
 
-When a `Deploy` run reaches the production job, it pauses: GitHub emails Craig and shows "Review deployments" at the top of the run. Read dev's plan summary on the same run, since production gets the same change, then approve or reject. Rejecting ends the run with dev deployed and production untouched. That approval is the approved change aws-design.md G11 asks for; nobody else can give it.
+When a `Deploy` run reaches the production job, it pauses: GitHub emails Craig and shows "Review deployments" at the top of the run. Read dev's plan summary on the same run, then approve or reject. Production gets the same change only when it was in step with dev before this run: if an earlier run's production job was rejected or failed, production also gets that run's commits, and their changes are in that run's dev summary. Rejecting ends the run with dev deployed and production untouched. That approval is the approved change aws-design.md G11 asks for; nobody else can give it.
 
 ### Rolling back
 
@@ -70,7 +70,7 @@ Both alarms notify the workloads account's existing `alerts` topic in us-west-2,
 
 ## One-time setup
 
-Done once, before the first cloud deploy, on a computer with OpenTofu 1.13 or newer, [Task](https://taskfile.dev), the AWS CLI with the `workloads-admin` profile from aws-setup, and the GitHub CLI signed in as Craig. Only step 4 changes AWS, and it runs only after the plan in step 3 is approved (aws-design G11). Run everything in the soccer checkout, on `main` after `git pull`, in one terminal.
+Done once, before the first cloud deploy, on a computer with OpenTofu 1.13 or newer, [Task](https://taskfile.dev), the AWS CLI with the `workloads-admin` profile from aws-setup, and the GitHub CLI signed in as Craig. Only step 4 changes AWS, and it runs only after the plan in step 3 is approved (aws-design G11). Run everything in the soccer checkout, in one terminal, on `main` after `git pull`, or, before the change that adds this setup is merged, on its branch. A `Deploy` run that starts before the setup is done stops at its first step and changes nothing; GitHub creates the `dev` environment it names without protection, and step 5 then sets it up.
 
 1. **Sign in.**
 
@@ -135,9 +135,9 @@ Done once, before the first cloud deploy, on a computer with OpenTofu 1.13 or ne
 
    This prints `{"name":"dev","rules":["branch_policy"]}` and `{"name":"production","rules":["required_reviewers","branch_policy"]}`. Production without `required_reviewers` would deploy without asking; fix it before going on.
 
-6. **Deploy.** Merge to `main`, or run `Deploy` by hand (Actions, `Deploy`, "Run workflow" on `main`). Dev deploys by itself; approve production when the run asks.
+6. **Deploy.** Merge to `main`, or, if it is merged already, run `Deploy` by hand (Actions, `Deploy`, "Run workflow" on `main`). Dev deploys by itself; approve production when the run asks.
 
-The first cloud deploy of each environment ships whatever `main` holds that was not applied yet, and also puts its function's role inside its boundary (`aws_iam_role.server` changes in place); the boundary is the only change the move to Actions itself makes to a deployment.
+The first cloud deploy of each environment ships whatever `main` holds that was not applied yet. The move to Actions itself changes two things in place: the function's role goes inside its boundary (`aws_iam_role.server`), and the function's `filename` in the state becomes `../dist/soccer.zip` instead of the absolute path a computer gave (`aws_lambda_function.server`, which uploads the code again).
 
 ## Testing on a computer
 
@@ -152,7 +152,7 @@ task infra:plan             # builds dist/soccer.zip and plans; ENV=prod for pro
 
 Applying from a computer (`task infra:apply`, then `task infra:smoke`) is for when GitHub Actions cannot deploy, and like any apply it needs Craig's approval of that plan first. The next `Deploy` run brings the environment back to `main` either way.
 
-A bare `tofu` command needs the deployment's cache on its own command line, such as `TF_DATA_DIR="$PWD/infra/.terraform.dev" tofu -chdir=infra output -raw function_url`; do not `export` it, because an exported value would override the `ENV` of every later `task infra:*` command. A checkout that deployed before the inputs were committed has gitignored `infra/backend.<env>.hcl` and `infra/deployment.<env>.tfvars` files; they are no longer read and can be deleted.
+A bare `tofu` command needs the deployment's cache on its own command line, such as `TF_DATA_DIR="$PWD/infra/.terraform.dev" tofu -chdir=infra output -raw function_url`; do not `export` it, because every later bare `tofu` command in that terminal would then use that deployment's state, whichever you meant. The `task infra:*` commands set their own and are not affected. A checkout that deployed before the inputs were committed has gitignored `infra/backend.<env>.hcl` and `infra/deployment.<env>.tfvars` files; they are no longer read and can be deleted.
 
 To call the backend yourself, sign the request with the administrator profile:
 
