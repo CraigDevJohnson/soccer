@@ -115,12 +115,22 @@ run "the_backend_stays_private_whatever_a_commit_says" {
 run "roles_are_made_only_inside_the_boundary_which_stays_on" {
   command = plan
 
+  # Each boundary gets its own ARN here, so the check below tells them apart.
+  override_resource {
+    target = aws_iam_policy.server_boundary["dev"]
+    values = { arn = "arn:aws:iam::793680745829:policy/soccer-server-boundary-dev" }
+  }
+  override_resource {
+    target = aws_iam_policy.server_boundary["prod"]
+    values = { arn = "arn:aws:iam::793680745829:policy/soccer-server-boundary-prod" }
+  }
+
   assert {
     condition = alltrue([for env, policy in aws_iam_role_policy.deployer : anytrue([
       for statement in jsondecode(policy.policy).Statement :
-      statement.Sid == "RoleInsideBoundary" && contains(keys(statement.Condition.StringEquals), "iam:PermissionsBoundary")
+      statement.Sid == "RoleInsideBoundary" && statement.Condition.StringEquals["iam:PermissionsBoundary"] == "arn:aws:iam::793680745829:policy/soccer-server-boundary-${env}"
     ])])
-    error_message = "CreateRole, PutRolePolicy and PutRolePermissionsBoundary require this deployment's boundary."
+    error_message = "CreateRole, PutRolePolicy and PutRolePermissionsBoundary require this deployment's own boundary, never the other's."
   }
   assert {
     condition = alltrue([for env, policy in aws_iam_role_policy.deployer : anytrue([

@@ -84,10 +84,12 @@ tasks:
     desc: Format, validate and test both OpenTofu roots offline; needs no credentials
     cmds:
       - tofu fmt -check -recursive infra
-      - '{{.TOFU_OFFLINE}} -chdir=infra init -backend=false -input=false >/dev/null'
+      # Read-only like infra:init, so a lock file out of step with the
+      # configuration fails here, not in the Deploy run after a merge.
+      - '{{.TOFU_OFFLINE}} -chdir=infra init -backend=false -input=false -lockfile=readonly >/dev/null'
       - '{{.TOFU_OFFLINE}} -chdir=infra validate'
       - '{{.TOFU_OFFLINE}} -chdir=infra test'
-      - '{{.TOFU_BOOTSTRAP_OFFLINE}} -chdir=infra/bootstrap init -backend=false -input=false >/dev/null'
+      - '{{.TOFU_BOOTSTRAP_OFFLINE}} -chdir=infra/bootstrap init -backend=false -input=false -lockfile=readonly >/dev/null'
       - '{{.TOFU_BOOTSTRAP_OFFLINE}} -chdir=infra/bootstrap validate'
       - '{{.TOFU_BOOTSTRAP_OFFLINE}} -chdir=infra/bootstrap test'
 
@@ -95,7 +97,12 @@ tasks:
     desc: Point the ENV deployment (default dev) at its state (infra/environments/<ENV>.tfbackend)
     deps: [infra:inputs]
     cmds:
-      - '{{.TOFU}} -chdir=infra init -input=false -backend-config=environments/{{.ENV}}.tfbackend'
+      # Init also installs any provider the state names, and the Deploy jobs
+      # write the state, so only the committed lock file chooses providers
+      # (infra:inputs refuses a changed one): a provider it lacks stops the
+      # init, and no plan will start it with this computer's credentials.
+      # Never drop the flag to get past that stop (docs/operations/deploy.md).
+      - '{{.TOFU}} -chdir=infra init -input=false -lockfile=readonly -backend-config=environments/{{.ENV}}.tfbackend'
 
   infra:plan:
     desc: Build the zip and plan the ENV deployment (default dev) into infra/soccer.<ENV>.tfplan (task infra:init first)
@@ -134,15 +141,18 @@ tasks:
         function_url=$({{.TOFU}} -chdir=infra output -raw function_url)
         sh scripts/smoke.sh "$link_base_url" "$function_url"
 
-  # Shared by the deployment tasks: ENV must name a committed deployment, and
-  # AWS credentials must be chosen: a profile on a computer, or the keys the
-  # Deploy workflow's OIDC sign-in puts in the environment.
+  # Shared by the deployment tasks: ENV must name a committed deployment, the
+  # provider lock file must be the committed one, and AWS credentials must be
+  # chosen: a profile on a computer, or the keys the Deploy workflow's OIDC
+  # sign-in puts in the environment.
   infra:inputs:
     internal: true
     silent: true
     preconditions:
       - sh: test -f infra/environments/{{.ENV}}.tfvars && test -f infra/environments/{{.ENV}}.tfbackend
         msg: "No deployment named {{.ENV}}: ENV must be dev or prod (infra/environments/)"
+      - sh: git diff --quiet HEAD -- infra/.terraform.lock.hcl
+        msg: "infra/.terraform.lock.hcl differs from the commit. Deployments use only the committed lock file: commit a deliberate provider change first, or restore it with git checkout -- infra/.terraform.lock.hcl"
       - sh: test -n "${AWS_PROFILE:-}" || test -n "${AWS_ACCESS_KEY_ID:-}"
         msg: "No AWS credentials: set AWS_PROFILE to the workloads account's admin profile, then: aws sso login"
 
