@@ -6,8 +6,10 @@
 # The deploy roles (infra/bootstrap) trust a job through GitHub OIDC only with
 # the subject repo:CraigDevJohnson@42454849/soccer@1412575682:environment:dev
 # or ...:environment:production, so each deploy job must declare its
-# environment, and each reads its role from a variable set only in that
-# environment: a job in an environment nobody set up has no role to assume.
+# environment. What keeps every other branch out is each environment's
+# main-only branch policy, set up before the roles exist. Each job reads its
+# role from a variable set only in its environment, so a run before that
+# setup stops at its first step.
 name: Deploy
 
 on:

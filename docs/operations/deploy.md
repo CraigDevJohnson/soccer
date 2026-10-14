@@ -63,14 +63,14 @@ Both alarms notify the workloads account's existing `alerts` topic in us-west-2,
 
 `infra/bootstrap` is a second OpenTofu root, applied by hand with the administrator profile, because the roles it makes are what the workflow signs in as. Its state is `soccer/bootstrap/terraform.tfstate` in the same bucket. Per deployment it makes:
 
-- **`soccer-deployer-<env>`,** trusted only by GitHub's OIDC token for a job in this repository's `dev` or `production` environment (the exact `aud` and `sub`; the repository uses GitHub's immutable subject, `repo:CraigDevJohnson@42454849/soccer@1412575682:environment:<name>`). Its one inline policy allows what an apply of `infra/` needs and no more: its own state key and lock file, and the function, log group, metric filter, alarms and role named `soccer-<env>-*`. Reads are pinned to the same names wherever AWS allows it, so it cannot read another app's state, settings or secrets. Three conditions keep the backend private whatever a commit says: a Function URL can only be created or changed with `AWS_IAM` auth, a call to the function can only be granted to `site-<env>-server`, and a role can only be created, given a policy or given a boundary while it carries the boundary below, which can never be taken off. The deploy role is named outside `soccer-<env>-*`, so it cannot change itself.
+- **`soccer-deployer-<env>`,** trusted only by GitHub's OIDC token for a job in this repository's `dev` or `production` environment (the exact `aud` and `sub`; the repository uses GitHub's immutable subject, `repo:CraigDevJohnson@42454849/soccer@1412575682:environment:<name>`). Its one inline policy allows what an apply of `infra/` needs and no more: its own state key and lock file, and the function, log group, metric filter, alarms and role named `soccer-<env>-*`. Reads are pinned to the same names wherever AWS allows it, so it cannot read another app's state or secrets; only log group and alarm settings, which hold none, are read account-wide. Four conditions keep the backend private and the role inside its own deployment whatever a commit says: a Function URL can only be created or changed with `AWS_IAM` auth, a call to the function can only be granted to `site-<env>-server`, an alarm can do nothing but notify the `alerts` topic (so an alarm on another app's metric can never stop or terminate its instance), and a role can only be created, given a policy or given a boundary while it carries the boundary below, which can never be taken off. The deploy role is named outside `soccer-<env>-*`, so it cannot change itself.
 - **`soccer-server-boundary-<env>`,** the permissions boundary on the function's role: at most, write the deployment's own logs.
 
 `task infra:check` tests all of this offline (`infra/bootstrap/tests`).
 
 ## One-time setup
 
-Done once, before the first cloud deploy, on a computer with OpenTofu 1.13 or newer, [Task](https://taskfile.dev), the AWS CLI with the `workloads-admin` profile from aws-setup, and the GitHub CLI signed in as Craig. Only step 4 changes AWS, and it runs only after the plan in step 3 is approved (aws-design G11). Run everything in the soccer checkout, in one terminal, on `main` after `git pull`, or, before the change that adds this setup is merged, on its branch. A `Deploy` run that starts before the setup is done stops at its first step and changes nothing; GitHub creates the `dev` environment it names without protection, and step 5 then sets it up.
+Done once, before the first cloud deploy, on a computer with OpenTofu 1.13 or newer, [Task](https://taskfile.dev), the AWS CLI with the `workloads-admin` profile from aws-setup, and the GitHub CLI signed in as Craig. Only step 5 changes AWS, and it runs only after the plan in step 4 is approved (aws-design G11). The GitHub environments are set up before the roles exist, so no job outside `main` ever gets a role to sign in as. Run everything in the soccer checkout, in one terminal, on `main` after `git pull`, or, before the change that adds this setup is merged, on its branch. A `Deploy` run that starts before the setup is done stops at its first step and changes nothing; GitHub creates the `dev` environment it names without protection, and step 3 then sets it up.
 
 1. **Sign in.**
 
@@ -90,24 +90,7 @@ Done once, before the first cloud deploy, on a computer with OpenTofu 1.13 or ne
 
    It prints the repository's subject settings; `use_immutable_subject` must be `true`, as it is for the-lobby, minecraft and foundry. If it is not, stop: the roles would trust a subject GitHub never issues for this repository.
 
-3. **Plan the roles.**
-
-   ```sh
-   task infra:bootstrap:init
-   task infra:bootstrap:plan
-   ```
-
-   The init prints `Successfully configured the backend "s3"!` and ends with `OpenTofu has been successfully initialized!`. The plan reads the account's GitHub OIDC provider, then ends in `Plan: 6 to add, 0 to change, 0 to destroy.`: `aws_iam_policy.server_boundary["dev"]` and `["prod"]`, `aws_iam_role.deployer["dev"]` and `["prod"]`, and `aws_iam_role_policy.deployer["dev"]` and `["prod"]`. Anything else is a stop condition. The plan is saved as `infra/bootstrap/bootstrap.tfplan` (gitignored).
-
-4. **Apply** the plan you approved.
-
-   ```sh
-   task infra:bootstrap:apply
-   ```
-
-   This prints a `Creation complete` line per resource and ends with `Apply complete! Resources: 6 added, 0 changed, 0 destroyed.`, then the outputs: `deployer_role_arns` (`dev` and `prod`, `arn:aws:iam::793680745829:role/soccer-deployer-<env>`) and `server_boundary_arns`.
-
-5. **Make the GitHub environments.** The `dev` environment, deployable from `main` only, with its role:
+3. **Make the GitHub environments.** The `dev` environment, deployable from `main` only, with its role:
 
    ```sh
    gh api -X PUT repos/CraigDevJohnson/soccer/environments/dev --input - <<'EOF'
@@ -133,7 +116,24 @@ Done once, before the first cloud deploy, on a computer with OpenTofu 1.13 or ne
    gh api repos/CraigDevJohnson/soccer/environments --jq '.environments[] | {name, rules: [.protection_rules[].type]}'
    ```
 
-   This prints `{"name":"dev","rules":["branch_policy"]}` and `{"name":"production","rules":["required_reviewers","branch_policy"]}`. Production without `required_reviewers` would deploy without asking; fix it before going on.
+   This prints `{"name":"dev","rules":["branch_policy"]}` and `{"name":"production","rules":["required_reviewers","branch_policy"]}`. Production without `required_reviewers` would deploy without asking; fix it before going on. A `Deploy` run before step 5 fails when it signs in, since the roles do not exist yet, and changes nothing.
+
+4. **Plan the roles.**
+
+   ```sh
+   task infra:bootstrap:init
+   task infra:bootstrap:plan
+   ```
+
+   The init prints `Successfully configured the backend "s3"!` and ends with `OpenTofu has been successfully initialized!`. The plan reads the account's GitHub OIDC provider, then ends in `Plan: 6 to add, 0 to change, 0 to destroy.`: `aws_iam_policy.server_boundary["dev"]` and `["prod"]`, `aws_iam_role.deployer["dev"]` and `["prod"]`, and `aws_iam_role_policy.deployer["dev"]` and `["prod"]`. Anything else is a stop condition. The plan is saved as `infra/bootstrap/bootstrap.tfplan` (gitignored).
+
+5. **Apply** the plan you approved.
+
+   ```sh
+   task infra:bootstrap:apply
+   ```
+
+   This prints a `Creation complete` line per resource and ends with `Apply complete! Resources: 6 added, 0 changed, 0 destroyed.`, then the outputs: `deployer_role_arns` (`dev` and `prod`, `arn:aws:iam::793680745829:role/soccer-deployer-<env>`) and `server_boundary_arns`.
 
 6. **Deploy.** Merge to `main`, or, if it is merged already, run `Deploy` by hand (Actions, `Deploy`, "Run workflow" on `main`). Dev deploys by itself; approve production when the run asks.
 
@@ -176,4 +176,4 @@ Lambda stays well inside the free tier at this use. The two alarms are about $0.
 
 ## Evidence limits
 
-`task ci` runs the Go tests and the OpenTofu tests against a mocked provider: names, the IAM-only URL, the two permissions, the logs-only policy, the environment, the alarms, the input checks, and the deploy roles' trust and policy. None of it calls AWS, so whether the deploy role's policy covers every call an apply makes is proven only by the first `Deploy` run of each environment; a missing permission fails that run's plan or apply with `AccessDenied`, naming the action. A plan that fails changes nothing; an apply that fails part-way keeps what it changed before the error, and the next run after the fix finishes the rest. The smoke test proves the site reaches the backend and that unsigned calls are refused, not that the league answers. The league alarm has not fired until the league fails; `aws cloudwatch set-alarm-state --alarm-name soccer-dev-server-league-unavailable --state-value ALARM --state-reason test --region us-west-2` proves the email path, and the alarm returns to OK by itself.
+`task ci` runs the Go tests and the OpenTofu tests against a mocked provider: names, the IAM-only URL, the two permissions, the logs-only policy, the environment, the alarms, the input checks, and the deploy roles' trust and policy. None of it calls AWS, so whether the deploy role's policy covers every call an apply makes is proven only by the first `Deploy` run of each environment; a missing permission fails that run's plan or apply with `AccessDenied`, naming the action. A plan that fails changes nothing; an apply that fails part-way keeps what it changed before the error, and the next run after the fix finishes the rest. The alarm limit rests on AWS's description of `cloudwatch:AlarmActions`, the actions an alarm may take when its state changes; that it also covers an alarm's OK actions has not been tested. The smoke test proves the site reaches the backend and that unsigned calls are refused, not that the league answers. The league alarm has not fired until the league fails; `aws cloudwatch set-alarm-state --alarm-name soccer-dev-server-league-unavailable --state-value ALARM --state-reason test --region us-west-2` proves the email path, and the alarm returns to OK by itself.

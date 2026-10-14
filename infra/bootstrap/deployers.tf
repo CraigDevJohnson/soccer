@@ -32,6 +32,10 @@ locals {
   }
 
   state_bucket_arn = "arn:aws:s3:::${var.state_bucket_name}"
+
+  # The account's alerts topic, the one place a soccer alarm may notify
+  # (alert_topic_arn in infra/environments/<env>.tfvars).
+  alert_topic_arn = "arn:aws:sns:${var.region}:${var.account_id}:alerts"
 }
 
 # ---------------------------------------------------------------------------
@@ -91,10 +95,13 @@ resource "aws_iam_role" "deployer" {
 # function, Function URL, permissions, role, log group, metric filter and
 # alarms named soccer-<env>-*. Reads are listed per service and pinned to the
 # same names wherever the action allows it, so this role cannot read another
-# app's state, function settings or secrets. Three conditions keep the
-# backend private whatever a commit says: the Function URL can only be
-# AWS_IAM, a call may only be granted to the site's role, and a role may only
-# be made or given a policy inside the boundary above, which stays on.
+# app's state, function settings or secrets. Four conditions keep the
+# backend private and the role inside its own deployment whatever a commit
+# says: the Function URL can only be AWS_IAM, a call may only be granted to
+# the site's role, an alarm may only notify the alerts topic (never stop or
+# terminate an instance, which an alarm on another app's metric could), and
+# a role may only be made or given a policy inside the boundary above, which
+# stays on.
 resource "aws_iam_role_policy" "deployer" {
   for_each = local.deployments
 
@@ -185,12 +192,22 @@ resource "aws_iam_role_policy" "deployer" {
         Resource = ["arn:aws:logs:${var.region}:${var.account_id}:log-group:*"]
       },
 
-      # CloudWatch alarms, named soccer-<env>-*.
+      # CloudWatch alarms, named soccer-<env>-*. AWS documents
+      # cloudwatch:AlarmActions as the actions an alarm may take when its
+      # state changes; an alarm with none is allowed.
+      {
+        Sid      = "AlarmsNotifyOnlyAlerts"
+        Effect   = "Allow"
+        Action   = ["cloudwatch:PutMetricAlarm"]
+        Resource = [each.value.alarms]
+        Condition = {
+          "ForAllValues:StringEquals" = { "cloudwatch:AlarmActions" = [local.alert_topic_arn] }
+        }
+      },
       {
         Sid    = "Alarms"
         Effect = "Allow"
         Action = [
-          "cloudwatch:PutMetricAlarm",
           "cloudwatch:DeleteAlarms",
           "cloudwatch:TagResource",
           "cloudwatch:UntagResource",
@@ -198,6 +215,9 @@ resource "aws_iam_role_policy" "deployer" {
         ]
         Resource = [each.value.alarms]
       },
+      # Alarm settings hold no secrets. Granted on every alarm because a
+      # refused read would fail every plan, and whether AWS honours a
+      # soccer-<env>-* pin for the provider's lookup by name is unproven.
       {
         Sid      = "AlarmRead"
         Effect   = "Allow"

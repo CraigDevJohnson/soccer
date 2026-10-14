@@ -65,7 +65,7 @@ run "each_role_reaches_only_its_own_deployment" {
       for statement in jsondecode(policy.policy).Statement :
       statement.Resource != ["*"] || statement.Action == ["cloudwatch:DescribeAlarms"]
     ])])
-    error_message = "Only DescribeAlarms, which takes no resource, is granted on every resource."
+    error_message = "Only DescribeAlarms, whose settings hold no secrets, is granted on every resource."
   }
   assert {
     condition = alltrue([for env, policy in aws_iam_role_policy.deployer : alltrue([
@@ -99,9 +99,16 @@ run "the_backend_stays_private_whatever_a_commit_says" {
   assert {
     condition = alltrue([for env, policy in aws_iam_role_policy.deployer : alltrue([
       for statement in jsondecode(policy.policy).Statement :
-      statement.Effect == "Deny" || length(setintersection(toset(statement.Action), toset(["lambda:AddPermission", "lambda:CreateFunctionUrlConfig", "lambda:UpdateFunctionUrlConfig", "iam:CreateRole", "iam:PutRolePolicy", "iam:PutRolePermissionsBoundary", "iam:AttachRolePolicy"]))) == 0 || contains(["FunctionUrlIamOnly", "InvokeGrantsToTheSiteOnly", "RoleInsideBoundary"], statement.Sid)
+      statement.Effect == "Deny" || length(setintersection(toset(statement.Action), toset(["lambda:AddPermission", "lambda:CreateFunctionUrlConfig", "lambda:UpdateFunctionUrlConfig", "iam:CreateRole", "iam:PutRolePolicy", "iam:PutRolePermissionsBoundary", "iam:AttachRolePolicy", "cloudwatch:PutMetricAlarm", "cloudwatch:PutCompositeAlarm"]))) == 0 || contains(["FunctionUrlIamOnly", "InvokeGrantsToTheSiteOnly", "RoleInsideBoundary", "AlarmsNotifyOnlyAlerts"], statement.Sid)
     ])])
-    error_message = "Granting calls, opening the Function URL and giving a role power happen only in the three conditioned statements."
+    error_message = "Granting calls, opening the Function URL, giving a role power and choosing what an alarm does happen only in the four conditioned statements."
+  }
+  assert {
+    condition = alltrue([for env, policy in aws_iam_role_policy.deployer : anytrue([
+      for statement in jsondecode(policy.policy).Statement :
+      statement.Sid == "AlarmsNotifyOnlyAlerts" && statement.Action == ["cloudwatch:PutMetricAlarm"] && keys(statement.Condition) == ["ForAllValues:StringEquals"] && statement.Condition["ForAllValues:StringEquals"]["cloudwatch:AlarmActions"] == ["arn:aws:sns:us-west-2:793680745829:alerts"]
+    ])])
+    error_message = "An alarm may only notify the alerts topic, so a commit cannot make one stop, reboot or terminate another app's instance."
   }
 }
 
