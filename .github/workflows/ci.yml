@@ -1,7 +1,7 @@
 # Checks that run on every pull request, whoever opened it, and on every push
 # to main. Nothing here can reach an AWS account: no secrets, no cloud role,
-# and a read-only token. Plans and applies run from a developer's computer
-# (docs/operations/deploy.md).
+# and a read-only token. Plans and applies run in the Deploy workflow, on main
+# only (deploy.yml, docs/operations/deploy.md).
 name: CI
 
 on:
@@ -62,5 +62,5 @@ jobs:
         with:
           version: 3.x
 
-      - name: Format, validate and test the OpenTofu root offline
+      - name: Format, validate and test both OpenTofu roots offline
         run: task infra:check

@@ -1,10 +1,8 @@
 terraform {
   required_version = ">= 1.13.0"
 
-  # The bucket and key are private (docs/operations/deploy.md): copy
-  # backend.hcl.example to backend.<env>.hcl beside this file (backend.dev.hcl
-  # for the dev site, backend.prod.hcl for production), then `task infra:init`
-  # (`ENV=prod` for production).
+  # Each deployment's bucket and key are in environments/<env>.tfbackend,
+  # which `task infra:init` (`ENV=prod` for production) passes in.
   backend "s3" {
     encrypt      = true
     use_lockfile = true

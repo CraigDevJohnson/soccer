@@ -59,7 +59,7 @@ Needs Go (see `go.mod`) and [Task](https://taskfile.dev).
 task run          # http://127.0.0.1:8081 (SOCCER_ADDR to change)
 task ci           # gofmt, vet, tests, and the OpenTofu checks below
 task lambda       # dist/soccer.zip for provided.al2023 on arm64
-task infra:check  # format, validate and test infra/ offline (needs OpenTofu)
+task infra:check  # format, validate and test infra/ and infra/bootstrap offline (needs OpenTofu)
 ```
 
 | Variable | Meaning |
@@ -71,7 +71,7 @@ task infra:check  # format, validate and test infra/ offline (needs OpenTofu)
 
 ## Deploying it
 
-`infra/` is the OpenTofu for one deployment: the function, its Function URL that only the site's role may call, its log group and two alarms. The private inputs (account, site role, alerts topic, link address) are gitignored copies of the `.example` files beside it. [docs/operations/deploy.md](docs/operations/deploy.md) has the exact steps; `task infra:plan` and `task infra:apply` run them, and the apply is an approved change (aws-setup's `aws-design.md`). GitHub Actions runs `task ci` on every pull request and never touches AWS.
+`infra/` is the OpenTofu for one deployment: the function, its Function URL that only the site's role may call, its log group and two alarms. There are two deployments, dev and production, one per site environment, and their inputs are committed in `infra/environments/`. GitHub Actions deploys them: `CI` runs `task ci` on every pull request and never touches AWS, and `Deploy` builds `main`, applies dev, then applies production once Craig approves it in GitHub. The deploy roles it signs in with are `infra/bootstrap`, applied by hand once. On a computer, `task infra:plan` (`ENV=prod` for production) is for testing. [docs/operations/deploy.md](docs/operations/deploy.md) has the details and the one-time setup.
 
 ## Licence
 

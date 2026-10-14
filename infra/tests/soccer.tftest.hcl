@@ -177,3 +177,35 @@ run "extra_tags_may_not_replace_the_fixed_ones" {
 
   expect_failures = [var.tags]
 }
+
+run "the_role_carries_the_boundary_it_is_given" {
+  command = plan
+
+  variables {
+    permissions_boundary_arn = "arn:aws:iam::111122223333:policy/soccer-server-boundary-dev"
+  }
+
+  assert {
+    condition     = aws_iam_role.server.permissions_boundary == "arn:aws:iam::111122223333:policy/soccer-server-boundary-dev"
+    error_message = "The function's role carries the boundary infra/bootstrap made, which the deploy role requires."
+  }
+}
+
+run "the_boundary_must_be_in_the_same_account" {
+  command = plan
+
+  variables {
+    permissions_boundary_arn = "arn:aws:iam::444455556666:policy/soccer-server-boundary-dev"
+  }
+
+  expect_failures = [var.permissions_boundary_arn]
+}
+
+run "the_site_is_reported_for_the_smoke_test" {
+  command = plan
+
+  assert {
+    condition     = output.link_base_url == "https://site.example.com/soccer/link/"
+    error_message = "task infra:smoke reads where the site serves Session links from the link_base_url output."
+  }
+}

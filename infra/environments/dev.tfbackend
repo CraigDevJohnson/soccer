@@ -1,0 +1,5 @@
+# Where the dev deployment keeps its state: the site's state bucket (the-lobby
+# infra/bootstrap), under a key of its own, with the bucket's native lock file.
+bucket = "craigdevjohnson-tofu-state-793680745829"
+key    = "soccer/dev/terraform.tfstate"
+region = "us-west-2"

@@ -1,10 +1,11 @@
 version: '3'
 
 # One deployment per site environment, chosen with ENV (default dev): its
-# private inputs are infra/backend.<ENV>.hcl and infra/deployment.<ENV>.tfvars,
+# committed inputs are infra/environments/<ENV>.tfvars and <ENV>.tfbackend,
 # its plan infra/soccer.<ENV>.tfplan, and its provider cache
 # infra/.terraform.<ENV>, so two environments never share a state or a plan.
-# For example: task infra:plan ENV=prod
+# The Deploy workflow runs these same tasks; on a computer they are for
+# testing (docs/operations/deploy.md). For example: task infra:plan ENV=prod
 vars:
   ENV: '{{.ENV | default "dev"}}'
   # Every tofu command names its provider cache on its own command line. A
@@ -13,6 +14,8 @@ vars:
   # would silently keep using dev's cache and backend.
   TOFU: 'TF_DATA_DIR="{{.ROOT_DIR}}/infra/.terraform.{{.ENV}}" tofu'
   TOFU_OFFLINE: 'TF_DATA_DIR="{{.ROOT_DIR}}/infra/.terraform" tofu'
+  TOFU_BOOTSTRAP: 'TF_DATA_DIR="{{.ROOT_DIR}}/infra/bootstrap/.terraform" tofu'
+  TOFU_BOOTSTRAP_OFFLINE: 'TF_DATA_DIR="{{.ROOT_DIR}}/infra/bootstrap/.terraform.offline" tofu'
 
 tasks:
   default:
@@ -78,44 +81,107 @@ tasks:
       - tofu fmt -recursive infra
 
   infra:check:
-    desc: Format, validate and test the OpenTofu root offline; needs no credentials
+    desc: Format, validate and test both OpenTofu roots offline; needs no credentials
     cmds:
       - tofu fmt -check -recursive infra
-      - '{{.TOFU_OFFLINE}} -chdir=infra init -backend=false -input=false >/dev/null'
+      # Read-only like infra:init, so a lock file out of step with the
+      # configuration fails here, not in the Deploy run after a merge.
+      - '{{.TOFU_OFFLINE}} -chdir=infra init -backend=false -input=false -lockfile=readonly >/dev/null'
       - '{{.TOFU_OFFLINE}} -chdir=infra validate'
       - '{{.TOFU_OFFLINE}} -chdir=infra test'
+      - '{{.TOFU_BOOTSTRAP_OFFLINE}} -chdir=infra/bootstrap init -backend=false -input=false -lockfile=readonly >/dev/null'
+      - '{{.TOFU_BOOTSTRAP_OFFLINE}} -chdir=infra/bootstrap validate'
+      - '{{.TOFU_BOOTSTRAP_OFFLINE}} -chdir=infra/bootstrap test'
 
   infra:init:
-    desc: Point the ENV deployment (default dev) at its state, from the private infra/backend.<ENV>.hcl (docs/operations/deploy.md)
-    preconditions:
-      - sh: test -n "$AWS_PROFILE"
-        msg: "Set AWS_PROFILE to the workloads account's admin profile, then: aws sso login"
-      - sh: test -f infra/backend.{{.ENV}}.hcl
-        msg: "No infra/backend.{{.ENV}}.hcl: copy infra/backend.hcl.example and fill it in (docs/operations/deploy.md)"
+    desc: Point the ENV deployment (default dev) at its state (infra/environments/<ENV>.tfbackend)
+    deps: [infra:inputs]
     cmds:
-      - '{{.TOFU}} -chdir=infra init -input=false -backend-config=backend.{{.ENV}}.hcl'
+      # Init also installs any provider the state names, and the Deploy jobs
+      # write the state, so only the committed lock file chooses providers
+      # (infra:inputs refuses a changed one): a provider it lacks stops the
+      # init, and no plan will start it with this computer's credentials.
+      # Never drop the flag to get past that stop (docs/operations/deploy.md).
+      - '{{.TOFU}} -chdir=infra init -input=false -lockfile=readonly -backend-config=environments/{{.ENV}}.tfbackend'
 
   infra:plan:
-    desc: Build the zip and plan the ENV deployment (default dev) into infra/soccer.<ENV>.tfplan (AWS_PROFILE, task infra:init first)
-    deps: [infra:private, lambda]
+    desc: Build the zip and plan the ENV deployment (default dev) into infra/soccer.<ENV>.tfplan (task infra:init first)
+    deps: [lambda]
     cmds:
-      - '{{.TOFU}} -chdir=infra plan -input=false -var-file=deployment.{{.ENV}}.tfvars -var "package_path={{.ROOT_DIR}}/dist/soccer.zip" -out=soccer.{{.ENV}}.tfplan'
+      - task: infra:plan:zip
+        vars: { ENV: '{{.ENV}}' }
+
+  infra:plan:zip:
+    desc: Plan the ENV deployment with the zip already in dist/soccer.zip, as the Deploy workflow does with its build job's zip
+    deps: [infra:inputs]
+    preconditions:
+      - sh: test -f dist/soccer.zip
+        msg: "No dist/soccer.zip: run task lambda, or task infra:plan, which builds it"
+    cmds:
+      # The zip's path is relative to infra/ and goes into the state, so a plan
+      # here and one in the Deploy workflow agree on it. A plan or apply that
+      # finds the state locked (by a run elsewhere) waits for it a while.
+      - '{{.TOFU}} -chdir=infra plan -input=false -lock-timeout=5m -var-file=environments/{{.ENV}}.tfvars -var "package_path=../dist/soccer.zip" -out=soccer.{{.ENV}}.tfplan'
 
   infra:apply:
-    desc: Apply the plan task infra:plan wrote for ENV (default dev), exactly as reviewed (an approved change)
-    deps: [infra:private]
+    desc: Apply the plan infra:plan wrote for ENV (default dev), exactly as reviewed (an approved change)
+    deps: [infra:inputs]
+    preconditions:
+      - sh: test -f infra/soccer.{{.ENV}}.tfplan
+        msg: "No infra/soccer.{{.ENV}}.tfplan: run task infra:plan ENV={{.ENV}} and review it first"
     cmds:
-      - '{{.TOFU}} -chdir=infra apply -input=false soccer.{{.ENV}}.tfplan'
+      - '{{.TOFU}} -chdir=infra apply -input=false -lock-timeout=5m soccer.{{.ENV}}.tfplan'
 
-  # Shared by plan and apply: the private inputs must exist and an AWS
-  # session must be chosen. Both come from docs/operations/deploy.md.
-  infra:private:
+  infra:smoke:
+    desc: Check the ENV deployment answers through its site and refuses unsigned calls (after an apply)
+    deps: [infra:inputs]
+    cmds:
+      - |
+        link_base_url=$({{.TOFU}} -chdir=infra output -raw link_base_url)
+        function_url=$({{.TOFU}} -chdir=infra output -raw function_url)
+        sh scripts/smoke.sh "$link_base_url" "$function_url"
+
+  # Shared by the deployment tasks: ENV must name a committed deployment, the
+  # provider lock file must be the committed one, and AWS credentials must be
+  # chosen: a profile on a computer, or the keys the Deploy workflow's OIDC
+  # sign-in puts in the environment.
+  infra:inputs:
     internal: true
     silent: true
     preconditions:
-      - sh: test -n "$AWS_PROFILE"
+      - sh: test -f infra/environments/{{.ENV}}.tfvars && test -f infra/environments/{{.ENV}}.tfbackend
+        msg: "No deployment named {{.ENV}}: ENV must be dev or prod (infra/environments/)"
+      - sh: git diff --quiet HEAD -- infra/.terraform.lock.hcl
+        msg: "infra/.terraform.lock.hcl differs from the commit. Deployments use only the committed lock file: commit a deliberate provider change first, or restore it with git checkout -- infra/.terraform.lock.hcl"
+      - sh: test -n "${AWS_PROFILE:-}" || test -n "${AWS_ACCESS_KEY_ID:-}"
+        msg: "No AWS credentials: set AWS_PROFILE to the workloads account's admin profile, then: aws sso login"
+
+  infra:bootstrap:init:
+    desc: Point infra/bootstrap (the deploy roles, applied by hand once) at its state, with the admin profile
+    deps: [infra:bootstrap:admin]
+    cmds:
+      - '{{.TOFU_BOOTSTRAP}} -chdir=infra/bootstrap init -input=false'
+
+  infra:bootstrap:plan:
+    desc: Plan infra/bootstrap into infra/bootstrap/bootstrap.tfplan, with the admin profile
+    deps: [infra:bootstrap:admin]
+    cmds:
+      - '{{.TOFU_BOOTSTRAP}} -chdir=infra/bootstrap plan -input=false -out=bootstrap.tfplan'
+
+  infra:bootstrap:apply:
+    desc: Apply the plan infra:bootstrap:plan wrote, exactly as reviewed (an approved change)
+    deps: [infra:bootstrap:admin]
+    preconditions:
+      - sh: test -f infra/bootstrap/bootstrap.tfplan
+        msg: "No infra/bootstrap/bootstrap.tfplan: run task infra:bootstrap:plan and review it first"
+    cmds:
+      - '{{.TOFU_BOOTSTRAP}} -chdir=infra/bootstrap apply -input=false bootstrap.tfplan'
+
+  # The deploy roles cannot create themselves, so infra/bootstrap runs only
+  # with the workloads account's admin profile on a computer.
+  infra:bootstrap:admin:
+    internal: true
+    silent: true
+    preconditions:
+      - sh: test -n "${AWS_PROFILE:-}"
         msg: "Set AWS_PROFILE to the workloads account's admin profile, then: aws sso login"
-      - sh: test -f infra/backend.{{.ENV}}.hcl
-        msg: "No infra/backend.{{.ENV}}.hcl: copy infra/backend.hcl.example and fill it in (docs/operations/deploy.md)"
-      - sh: test -f infra/deployment.{{.ENV}}.tfvars
-        msg: "No infra/deployment.{{.ENV}}.tfvars: copy infra/deployment.tfvars.example and fill it in (docs/operations/deploy.md)"

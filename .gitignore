@@ -8,8 +8,9 @@ coverage.out
 .env
 .env.*
 
-# OpenTofu: local data, state, plans, and the private deployment inputs
-# (the committed .example files stand in for them)
+# OpenTofu: local data, state and plans. Each deployment's inputs are
+# committed under infra/environments/; any other tfvars or backend file is a
+# local experiment and stays out.
 .terraform/
 .terraform.*/
 *.tfstate
@@ -19,11 +20,9 @@ crash.log
 crash.*.log
 *.tfvars
 *.tfvars.json
-!*.tfvars.example
-!*.tfvars.json.example
+!/infra/environments/*.tfvars
 backend.hcl
 backend.*.hcl
-!backend.hcl.example
 
 # Provider selections are committed so CI pins the same versions
 !.terraform.lock.hcl
