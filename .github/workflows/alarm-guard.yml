@@ -1,9 +1,10 @@
 # Checks, as the dev deploy role, that its alarm guard also refuses an OK or
 # insufficient-data action other than notifying the alerts topic
 # (scripts/check-alarm-guard.sh). Run by hand on main (Run workflow), only
-# after Craig approves the run: if the guard does not hold, its calls make a
-# throwaway alarm, which the script deletes. See docs/operations/deploy.md,
-# "Checking the alarm guard".
+# after Craig approves the run, because it changes AWS: each run makes and
+# deletes a throwaway alarm for its allowed control, and makes it again if the
+# guard does not hold. See docs/operations/deploy.md, "Checking the alarm
+# guard".
 name: Check alarm guard
 
 on:

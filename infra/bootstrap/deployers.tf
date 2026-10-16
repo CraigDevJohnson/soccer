@@ -43,7 +43,7 @@ locals {
 # The most a soccer function's role may ever do, whatever its own policy
 # says: write its own log group. One per deployment, so a dev role can never
 # be given a policy that reaches production's logs, and the deploy role can
-# only create or change roles that carry its deployment's boundary.
+# only change a role that carries its deployment's boundary.
 
 resource "aws_iam_policy" "server_boundary" {
   for_each = local.deployments
@@ -102,14 +102,15 @@ resource "aws_iam_role" "deployer" {
 # AWS_IAM, a call may only be granted to the site's role, an alarm may only
 # notify the alerts topic (never stop or terminate an instance, which an
 # alarm on another app's metric could), and the function's role may only be
-# made or given a policy inside the boundary above, which stays on.
+# given a policy or a boundary inside the boundary above, which stays on.
 #
-# IAM has no condition on a trust policy's contents, so the function role's
-# trust is fixed when the role is made: this role cannot change it
-# (UpdateAssumeRolePolicy), its session length (UpdateRole), or delete the
-# role and make it again with another trust (DeleteRole). A commit that needs
-# one of those, such as renaming or removing the role, fails its apply and is
-# applied from a computer instead (docs/operations/deploy.md).
+# IAM has no condition on what a trust policy says, so this role never sets
+# one: it cannot make the function's role (CreateRole), change its trust
+# (UpdateAssumeRolePolicy) or session length (UpdateRole), or delete it
+# (DeleteRole). A deployment's first apply, from a computer, makes the role.
+# The Deploy workflow refuses a plan that would make, replace or remove the
+# role or change its trust, so such a commit is applied from a computer
+# instead (docs/operations/deploy.md).
 resource "aws_iam_role_policy" "deployer" {
   for_each = local.deployments
 
@@ -248,14 +249,14 @@ resource "aws_iam_role_policy" "deployer" {
         Resource = ["*"]
       },
 
-      # IAM: the function's role and no other. Made, or given a policy or a
-      # boundary, only while it carries this deployment's boundary; read,
-      # described and tagged; handed to Lambda and to nothing else. Never
-      # given a new trust or deleted (above).
+      # IAM: the function's role and no other. Given a policy or a boundary
+      # only while it carries this deployment's boundary; read, described and
+      # tagged; handed to Lambda and to nothing else. Never made, given a new
+      # trust or deleted (above).
       {
         Sid      = "RoleInsideBoundary"
         Effect   = "Allow"
-        Action   = ["iam:CreateRole", "iam:PutRolePolicy", "iam:PutRolePermissionsBoundary"]
+        Action   = ["iam:PutRolePolicy", "iam:PutRolePermissionsBoundary"]
         Resource = [each.value.server_role]
         Condition = {
           StringEquals = { "iam:PermissionsBoundary" = aws_iam_policy.server_boundary[each.key].arn }
