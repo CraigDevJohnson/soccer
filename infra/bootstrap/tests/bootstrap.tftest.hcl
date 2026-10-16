@@ -55,15 +55,15 @@ run "each_role_reaches_only_its_own_deployment" {
     condition = alltrue(flatten([for env, policy in aws_iam_role_policy.deployer : [
       for statement in jsondecode(policy.policy).Statement : [
         for resource in statement.Resource :
-        resource == "*" || resource == "arn:aws:s3:::craigdevjohnson-tofu-state-793680745829" || resource == "arn:aws:logs:us-west-2:793680745829:log-group:*" || strcontains(resource, "soccer-${env}-") || strcontains(resource, "/soccer/${env}/")
+        resource == "*" || resource == "arn:aws:s3:::craigdevjohnson-tofu-state-793680745829" || strcontains(resource, "soccer-${env}-") || strcontains(resource, "/soccer/${env}/")
       ]
     ]]))
-    error_message = "Every resource a deploy role names is its own deployment's (soccer-<env>-*, soccer/<env>/), the state bucket for listing, or a read that AWS evaluates account-wide."
+    error_message = "Every resource a deploy role names is its own deployment's (soccer-<env>-*, soccer/<env>/), the state bucket for listing, or a read that AWS evaluates account-wide; metric filters are read only on its own log groups."
   }
   assert {
     condition = alltrue([for env, policy in aws_iam_role_policy.deployer : alltrue([
       for statement in jsondecode(policy.policy).Statement :
-      statement.Resource != ["*"] || contains([["cloudwatch:DescribeAlarms"], ["logs:DescribeLogGroups"]], statement.Action)
+      !contains(statement.Resource, "*") || (statement.Resource == ["*"] && contains([["cloudwatch:DescribeAlarms"], ["logs:DescribeLogGroups"]], statement.Action))
     ])])
     error_message = "Only DescribeAlarms and DescribeLogGroups, whose settings hold no secrets, are granted on every resource."
   }
@@ -99,7 +99,7 @@ run "the_backend_stays_private_whatever_a_commit_says" {
   assert {
     condition = alltrue([for env, policy in aws_iam_role_policy.deployer : alltrue([
       for statement in jsondecode(policy.policy).Statement :
-      statement.Effect == "Deny" || length(setintersection(toset(statement.Action), toset(["lambda:AddPermission", "lambda:CreateFunctionUrlConfig", "lambda:UpdateFunctionUrlConfig", "iam:CreateRole", "iam:PutRolePolicy", "iam:PutRolePermissionsBoundary", "iam:AttachRolePolicy", "cloudwatch:PutMetricAlarm", "cloudwatch:PutCompositeAlarm"]))) == 0 || contains(["FunctionUrlIamOnly", "InvokeGrantsToTheSiteOnly", "RoleInsideBoundary", "AlarmsNotifyOnlyAlerts"], statement.Sid)
+      statement.Effect == "Deny" || length(setintersection(toset(statement.Action), toset(["lambda:AddPermission", "lambda:CreateFunctionUrlConfig", "lambda:UpdateFunctionUrlConfig", "iam:CreateRole", "iam:PutRolePolicy", "iam:PutRolePermissionsBoundary", "iam:AttachRolePolicy", "cloudwatch:PutMetricAlarm", "cloudwatch:PutCompositeAlarm", "cloudwatch:PutLogAlarm"]))) == 0 || contains(["FunctionUrlIamOnly", "InvokeGrantsToTheSiteOnly", "RoleInsideBoundary", "AlarmsNotifyOnlyAlerts"], statement.Sid)
     ])])
     error_message = "Granting calls, opening the Function URL, giving a role power and choosing what an alarm does happen only in the four conditioned statements."
   }
@@ -112,7 +112,7 @@ run "the_backend_stays_private_whatever_a_commit_says" {
   }
 }
 
-run "roles_are_made_only_inside_the_boundary_which_stays_on" {
+run "the_function_role_changes_only_inside_the_boundary_which_stays_on" {
   command = plan
 
   # Each boundary gets its own ARN here, so the check below tells them apart.
@@ -130,7 +130,7 @@ run "roles_are_made_only_inside_the_boundary_which_stays_on" {
       for statement in jsondecode(policy.policy).Statement :
       statement.Sid == "RoleInsideBoundary" && statement.Condition.StringEquals["iam:PermissionsBoundary"] == "arn:aws:iam::793680745829:policy/soccer-server-boundary-${env}"
     ])])
-    error_message = "CreateRole, PutRolePolicy and PutRolePermissionsBoundary require this deployment's own boundary, never the other's."
+    error_message = "PutRolePolicy and PutRolePermissionsBoundary require this deployment's own boundary, never the other's."
   }
   assert {
     condition = alltrue([for env, policy in aws_iam_role_policy.deployer : anytrue([
@@ -145,6 +145,27 @@ run "roles_are_made_only_inside_the_boundary_which_stays_on" {
       statement.Sid == "PassRoleToLambdaOnly" && statement.Condition.StringEquals["iam:PassedToService"] == "lambda.amazonaws.com"
     ])])
     error_message = "A role is handed to Lambda and to nothing else."
+  }
+  assert {
+    condition = alltrue([for env, policy in aws_iam_role_policy.deployer : alltrue([
+      for statement in jsondecode(policy.policy).Statement :
+      statement.Effect == "Deny" || alltrue([for action in statement.Action : !startswith(action, "iam:")]) || statement.Resource == ["arn:aws:iam::793680745829:role/soccer-${env}-server"]
+    ])])
+    error_message = "The deploy role reaches one role, its deployment's function role soccer-<env>-server, and no other soccer-<env>-* name."
+  }
+  assert {
+    condition = alltrue([for env, policy in aws_iam_role_policy.deployer : alltrue([
+      for statement in jsondecode(policy.policy).Statement :
+      statement.Effect == "Deny" || length(setintersection(toset(statement.Action), toset(["iam:CreateRole", "iam:UpdateAssumeRolePolicy", "iam:UpdateRole", "iam:DeleteRole"]))) == 0
+    ])])
+    error_message = "The deploy role never sets a trust policy: it can neither make the function's role, change its trust or session length, nor delete it."
+  }
+  assert {
+    condition = alltrue([for env, policy in aws_iam_role_policy.deployer : length(setsubtract(
+      toset(["iam:GetRole", "iam:GetRolePolicy", "iam:ListRolePolicies", "iam:ListAttachedRolePolicies", "iam:PutRolePolicy", "iam:DeleteRolePolicy", "iam:PutRolePermissionsBoundary", "iam:TagRole", "iam:UntagRole", "iam:UpdateRoleDescription", "iam:PassRole"]),
+      toset(flatten([for statement in jsondecode(policy.policy).Statement : statement.Action if statement.Effect == "Allow" && statement.Resource == ["arn:aws:iam::793680745829:role/soccer-${env}-server"]]))
+    )) == 0])
+    error_message = "The deploy role keeps every call provider 6.68.0 makes to read the function's role and change its policy, boundary, tags and description, and to hand it to Lambda."
   }
   assert {
     condition = alltrue([for env, boundary in aws_iam_policy.server_boundary : (
@@ -165,6 +186,23 @@ run "state_is_only_the_deployments_own" {
       statement.Sid == "StateReadWrite" && statement.Resource == ["arn:aws:s3:::craigdevjohnson-tofu-state-793680745829/soccer/${env}/*"]
     ])])
     error_message = "A deploy role reads and writes only its own state key and lock file, never the bootstrap's or the site's."
+  }
+  assert {
+    condition = alltrue([for env, policy in aws_iam_role_policy.deployer : anytrue([
+      for statement in jsondecode(policy.policy).Statement :
+      statement.Sid == "StateList" && statement.Action == ["s3:ListBucket"] && keys(statement.Condition) == ["StringLike"] && statement.Condition.StringLike["s3:prefix"] == ["soccer/${env}/*"]
+    ])])
+    error_message = "A deploy role lists only keys under its own soccer/<env>/ prefix, where its tfbackend's workspace_key_prefix keeps the workspace list too."
+  }
+  assert {
+    condition = alltrue([for env, policy in aws_iam_role_policy.deployer : alltrue([
+      for statement in jsondecode(policy.policy).Statement :
+      statement.Effect == "Deny" ||
+      (!contains(statement.Resource, "arn:aws:s3:::craigdevjohnson-tofu-state-793680745829") && alltrue([for action in statement.Action : !startswith(action, "s3:")])) ||
+      (statement.Sid == "StateList" && statement.Action == ["s3:ListBucket"] && statement.Resource == ["arn:aws:s3:::craigdevjohnson-tofu-state-793680745829"]) ||
+      (statement.Sid == "StateReadWrite" && toset(statement.Action) == toset(["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]))
+    ])])
+    error_message = "S3 is reached only through StateList (the bucket, listed under soccer/<env>/ only) and StateReadWrite (its own keys); no other statement names the state bucket or an S3 action."
   }
 }
 

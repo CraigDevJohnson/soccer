@@ -141,6 +141,24 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Check the plan keeps the function's role
+        # The deploy role may not make, replace or remove the function's role,
+        # or change its trust or session length (infra/bootstrap). An apply
+        # would first remove what depends on the role, the function included
+        # when it is renamed, and only then be refused, so such a plan stops
+        # here and changes nothing; it is applied from a computer instead
+        # (docs/operations/deploy.md).
+        run: |
+          TF_DATA_DIR="$PWD/infra/.terraform.$ENV" tofu -chdir=infra show -json "soccer.$ENV.tfplan" > plan.json
+          if ! jq -e '[.resource_changes[]? | select(.address == "aws_iam_role.server") | .change
+              | select((.actions | any(. == "create" or . == "delete"))
+                or .before.assume_role_policy != .after.assume_role_policy
+                or .before.max_session_duration != .after.max_session_duration)]
+              | length == 0' plan.json > /dev/null; then
+            echo "::error::This plan makes, replaces or removes the function's role, or changes its trust, which the deploy role may not do. Apply it from a computer (docs/operations/deploy.md, The deploy roles)" >&2
+            exit 1
+          fi
+
       - name: Apply
         run: task infra:apply ENV="$ENV"
 
@@ -223,6 +241,24 @@ jobs:
             grep -E '^(  # |Plan:|No changes\.)' plan.txt || echo "(nothing to report)"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Check the plan keeps the function's role
+        # The deploy role may not make, replace or remove the function's role,
+        # or change its trust or session length (infra/bootstrap). An apply
+        # would first remove what depends on the role, the function included
+        # when it is renamed, and only then be refused, so such a plan stops
+        # here and changes nothing; it is applied from a computer instead
+        # (docs/operations/deploy.md).
+        run: |
+          TF_DATA_DIR="$PWD/infra/.terraform.$ENV" tofu -chdir=infra show -json "soccer.$ENV.tfplan" > plan.json
+          if ! jq -e '[.resource_changes[]? | select(.address == "aws_iam_role.server") | .change
+              | select((.actions | any(. == "create" or . == "delete"))
+                or .before.assume_role_policy != .after.assume_role_policy
+                or .before.max_session_duration != .after.max_session_duration)]
+              | length == 0' plan.json > /dev/null; then
+            echo "::error::This plan makes, replaces or removes the function's role, or changes its trust, which the deploy role may not do. Apply it from a computer (docs/operations/deploy.md, The deploy roles)" >&2
+            exit 1
+          fi
 
       - name: Apply
         run: task infra:apply ENV="$ENV"

@@ -4,3 +4,8 @@
 bucket = "craigdevjohnson-tofu-state-793680745829"
 key    = "soccer/prod/terraform.tfstate"
 region = "us-west-2"
+
+# Workspaces are listed under the deployment's own prefix, the only one its
+# deploy role may list (infra/bootstrap). The default workspace, the only one
+# used, keeps the key above.
+workspace_key_prefix = "soccer/prod"

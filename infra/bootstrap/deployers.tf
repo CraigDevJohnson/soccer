@@ -25,6 +25,7 @@ locals {
         "arn:aws:lambda:${var.region}:${var.account_id}:function:soccer-${env}-*:*",
       ]
       roles         = "arn:aws:iam::${var.account_id}:role/soccer-${env}-*"
+      server_role   = "arn:aws:iam::${var.account_id}:role/soccer-${env}-server"
       log_groups    = "arn:aws:logs:${var.region}:${var.account_id}:log-group:/aws/lambda/soccer-${env}-*"
       alarms        = "arn:aws:cloudwatch:${var.region}:${var.account_id}:alarm:soccer-${env}-*"
       site_role_arn = "arn:aws:iam::${var.account_id}:role/${settings.site_role}"
@@ -42,7 +43,7 @@ locals {
 # The most a soccer function's role may ever do, whatever its own policy
 # says: write its own log group. One per deployment, so a dev role can never
 # be given a policy that reaches production's logs, and the deploy role can
-# only create or change roles that carry its deployment's boundary.
+# only change a role that carries its deployment's boundary.
 
 resource "aws_iam_policy" "server_boundary" {
   for_each = local.deployments
@@ -91,17 +92,25 @@ resource "aws_iam_role" "deployer" {
   })
 }
 
-# Everything an apply of infra/ needs, and no more: its state, and the
-# function, Function URL, permissions, role, log group, metric filter and
-# alarms named soccer-<env>-*. Reads are listed per service and pinned to the
-# same names wherever the action allows it, so this role cannot read another
-# app's state, function settings or secrets. Four conditions keep the
-# backend private and the role inside its own deployment whatever a commit
-# says: the Function URL can only be AWS_IAM, a call may only be granted to
-# the site's role, an alarm may only notify the alerts topic (never stop or
-# terminate an instance, which an alarm on another app's metric could), and
-# a role may only be made or given a policy inside the boundary above, which
-# stays on.
+# Everything an apply of infra/ needs, and no more: its state, the function,
+# Function URL, permissions, log group, metric filter and alarms named
+# soccer-<env>-*, and the function's role, soccer-<env>-server. Reads are
+# listed per service and pinned to the same names wherever the action allows
+# it, so this role cannot read another app's state, function settings or
+# secrets. Four conditions keep the backend private and the role inside its
+# own deployment whatever a commit says: the Function URL can only be
+# AWS_IAM, a call may only be granted to the site's role, an alarm may only
+# notify the alerts topic (never stop or terminate an instance, which an
+# alarm on another app's metric could), and the function's role may only be
+# given a policy or a boundary inside the boundary above, which stays on.
+#
+# IAM has no condition on what a trust policy says, so this role never sets
+# one: it cannot make the function's role (CreateRole), change its trust
+# (UpdateAssumeRolePolicy) or session length (UpdateRole), or delete it
+# (DeleteRole). A deployment's first apply, from a computer, makes the role.
+# The Deploy workflow refuses a plan that would make, replace or remove the
+# role or change its trust, so such a commit is applied from a computer
+# instead (docs/operations/deploy.md).
 resource "aws_iam_role_policy" "deployer" {
   for_each = local.deployments
 
@@ -112,12 +121,21 @@ resource "aws_iam_role_policy" "deployer" {
     Version = "2012-10-17"
     Statement = [
       # OpenTofu state: this deployment's key and its lock file
-      # (<key>.tflock), nothing under another deployment's prefix.
+      # (<key>.tflock), nothing under another deployment's prefix. The S3
+      # backend lists the workspaces on every init, plan, apply and output;
+      # each tfbackend sets workspace_key_prefix to soccer/<env>, so that list
+      # stays inside the prefix too. With the listing pinned, S3 answers 403
+      # rather than 404 for a key that does not exist yet, so a new
+      # deployment's first apply, which writes its state key, runs from a
+      # computer.
       {
         Sid      = "StateList"
         Effect   = "Allow"
         Action   = ["s3:ListBucket"]
         Resource = [local.state_bucket_arn]
+        Condition = {
+          StringLike = { "s3:prefix" = ["${each.value.state_prefix}/*"] }
+        }
       },
       {
         Sid      = "StateReadWrite"
@@ -166,7 +184,9 @@ resource "aws_iam_role_policy" "deployer" {
       },
 
       # CloudWatch Logs: the function's log group, its retention, tags and
-      # metric filter.
+      # metric filter. The provider reads the metric filter by its log
+      # group's name (DescribeMetricFilters with logGroupName), so that read
+      # is pinned to the same log groups.
       {
         Sid    = "LogGroup"
         Effect = "Allow"
@@ -177,6 +197,7 @@ resource "aws_iam_role_policy" "deployer" {
           "logs:DeleteRetentionPolicy",
           "logs:PutMetricFilter",
           "logs:DeleteMetricFilter",
+          "logs:DescribeMetricFilters",
           "logs:TagResource",
           "logs:UntagResource",
           "logs:ListTagsForResource",
@@ -192,16 +213,12 @@ resource "aws_iam_role_policy" "deployer" {
         Action   = ["logs:DescribeLogGroups"]
         Resource = ["*"]
       },
-      {
-        Sid      = "LogGroupRead"
-        Effect   = "Allow"
-        Action   = ["logs:DescribeMetricFilters"]
-        Resource = ["arn:aws:logs:${var.region}:${var.account_id}:log-group:*"]
-      },
 
       # CloudWatch alarms, named soccer-<env>-*. AWS documents
       # cloudwatch:AlarmActions as the actions an alarm may take when its
-      # state changes; an alarm with none is allowed.
+      # state changes; an alarm with none is allowed. That it also covers an
+      # alarm's OK and insufficient-data actions is what the Check alarm
+      # guard workflow tests (docs/operations/deploy.md).
       {
         Sid      = "AlarmsNotifyOnlyAlerts"
         Effect   = "Allow"
@@ -232,14 +249,15 @@ resource "aws_iam_role_policy" "deployer" {
         Resource = ["*"]
       },
 
-      # IAM: the function's role. Made, or given a policy or a boundary, only
-      # while it carries this deployment's boundary; handed to Lambda and to
-      # nothing else.
+      # IAM: the function's role and no other. Given a policy or a boundary
+      # only while it carries this deployment's boundary; read, described and
+      # tagged; handed to Lambda and to nothing else. Never made, given a new
+      # trust or deleted (above).
       {
         Sid      = "RoleInsideBoundary"
         Effect   = "Allow"
-        Action   = ["iam:CreateRole", "iam:PutRolePolicy", "iam:PutRolePermissionsBoundary"]
-        Resource = [each.value.roles]
+        Action   = ["iam:PutRolePolicy", "iam:PutRolePermissionsBoundary"]
+        Resource = [each.value.server_role]
         Condition = {
           StringEquals = { "iam:PermissionsBoundary" = aws_iam_policy.server_boundary[each.key].arn }
         }
@@ -253,16 +271,12 @@ resource "aws_iam_role_policy" "deployer" {
           "iam:ListRolePolicies",
           "iam:ListAttachedRolePolicies",
           "iam:ListRoleTags",
-          "iam:ListInstanceProfilesForRole",
-          "iam:UpdateRole",
           "iam:UpdateRoleDescription",
-          "iam:UpdateAssumeRolePolicy",
           "iam:DeleteRolePolicy",
-          "iam:DeleteRole",
           "iam:TagRole",
           "iam:UntagRole",
         ]
-        Resource = [each.value.roles]
+        Resource = [each.value.server_role]
       },
       {
         Sid      = "BoundaryStays"
@@ -274,7 +288,7 @@ resource "aws_iam_role_policy" "deployer" {
         Sid      = "PassRoleToLambdaOnly"
         Effect   = "Allow"
         Action   = ["iam:PassRole"]
-        Resource = [each.value.roles]
+        Resource = [each.value.server_role]
         Condition = {
           StringEquals = { "iam:PassedToService" = "lambda.amazonaws.com" }
         }
