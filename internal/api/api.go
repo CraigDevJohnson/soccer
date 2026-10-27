@@ -288,15 +288,41 @@ func (h *Handler) wholeSchedule(w http.ResponseWriter, r *http.Request, ids []st
 
 func (h *Handler) render(s schedule.Schedule, sel schedule.Selection, notices []calendar.Notice) (string, error) {
 	chosen := sel.Chosen(s.Games)
+	names := make(map[string]string, len(s.Teams))
+	for _, t := range s.Teams {
+		names[t.ID] = t.Name
+	}
 	events := make([]calendar.Event, len(chosen))
 	for i, g := range chosen {
-		events[i] = calendar.Event{GameID: g.ID, Start: g.Start, End: g.End, Field: g.Field, Home: g.Home, Away: g.Away}
+		events[i] = calendar.Event{
+			GameID: g.ID, Start: g.Start, End: g.End, Field: g.Field,
+			Home: g.Home, Away: g.Away, Team: ownTeam(g, names),
+		}
 	}
 	name := calendar.Name(teamNames(s))
 	if name == "" {
 		name = "Soccer"
 	}
 	return calendar.Write(calendar.Calendar{Name: name, Events: events, Notices: notices}, h.now())
+}
+
+// ownTeam names the calendar's Team that plays in g, so its title can put
+// that Team first: the side whose Team ID the league gave, or, when the
+// league named no sides, the Team's own name for the calendar to match.
+// When the game is between two of the calendar's Teams, or none, it is "",
+// and the title keeps Home vs Away.
+func ownTeam(g schedule.Game, names map[string]string) string {
+	if len(g.TeamIDs) != 1 {
+		return ""
+	}
+	id := g.TeamIDs[0]
+	switch {
+	case g.HomeID != "" && id == g.HomeID:
+		return g.Home
+	case g.AwayID != "" && id == g.AwayID:
+		return g.Away
+	}
+	return names[id]
 }
 
 func teamNames(s schedule.Schedule) []string {

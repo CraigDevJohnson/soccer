@@ -49,13 +49,17 @@ type Team struct {
 	FacilityID string   `json:"-"`
 }
 
-// Game is one league game. Start is in Mountain time.
+// Game is one league game. Start is in Mountain time. HomeID and AwayID are
+// the Team IDs of the two sides, when the league names them; they say which
+// side a Team is without comparing names.
 type Game struct {
-	ID    string    `json:"id"`
-	Start time.Time `json:"start"`
-	Field string    `json:"field"`
-	Home  string    `json:"home"`
-	Away  string    `json:"away"`
+	ID     string    `json:"id"`
+	Start  time.Time `json:"start"`
+	Field  string    `json:"field"`
+	Home   string    `json:"home"`
+	Away   string    `json:"away"`
+	HomeID string    `json:"home_id,omitempty"`
+	AwayID string    `json:"away_id,omitempty"`
 }
 
 // TeamSummary is a Team as a search or a division lists it, without games.
@@ -106,6 +110,20 @@ type TeamLists interface {
 }
 
 var teamIDPattern = regexp.MustCompile(`^[0-9]{6}$`)
+
+// fieldNumber is a field the league numbers: "3", or "3A".
+var fieldNumber = regexp.MustCompile(`^[0-9]+[A-Za-z]?$`)
+
+// FieldNumber returns the number of a field the league gives as a bare
+// number or as "Field N", and whether it is one. Any other field name is
+// not a number: "North Court", or "Field 3 North".
+func FieldNumber(field string) (string, bool) {
+	n := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(field), "Field"))
+	if fieldNumber.MatchString(n) {
+		return n, true
+	}
+	return "", false
+}
 
 // ValidTeamID reports whether s, trimmed, is a six-digit Team ID, and returns
 // it trimmed. Leading zeros are allowed, as soccer_scraper allowed them;
