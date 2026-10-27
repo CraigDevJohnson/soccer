@@ -37,7 +37,7 @@ func TestWrite(t *testing.T) {
 		"SUMMARY:ROVERS vs KICKERS - Field 3\r\n",
 		"DESCRIPTION:Field 3\\nROVERS vs KICKERS\\nLet's Play Soccer\\, Boise\r\n",
 		"SUMMARY:ROVERS vs OWLS - Field 1\r\n",
-		"DESCRIPTION:Field 1\\nROVERS vs OWLS\\nLet's Play Soccer\\, Boise\r\n",
+		"DESCRIPTION:Field 1\\nOWLS vs ROVERS\\nLet's Play Soccer\\, Boise\r\n",
 		"LOCATION:Let's Play Soccer\\, Boise",
 		"TRIGGER:-PT40M",
 		"DTSTAMP:20261010T000000Z",
@@ -91,10 +91,11 @@ func TestTitle(t *testing.T) {
 	}
 }
 
-// The description keeps the field on its own line and the matchup in the
-// title's order; a game with no field has no empty line.
+// The description keeps the field on its own line and the game as the
+// league lists it, Home vs Away, even when the title puts the away Team
+// first; a game with no field has no empty line.
 func TestDescription(t *testing.T) {
-	if got := description(Event{Home: "OWLS", Away: "ROVERS", Team: "ROVERS", Field: "1"}); got != "Field 1\nROVERS vs OWLS\nLet's Play Soccer, Boise" {
+	if got := description(Event{Home: "OWLS", Away: "ROVERS", Team: "ROVERS", Field: "1"}); got != "Field 1\nOWLS vs ROVERS\nLet's Play Soccer, Boise" {
 		t.Errorf("description = %q", got)
 	}
 	if got := description(Event{Home: "OWLS", Away: "ROVERS"}); got != "OWLS vs ROVERS\nLet's Play Soccer, Boise" {
