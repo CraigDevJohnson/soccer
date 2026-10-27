@@ -65,10 +65,12 @@ type teamResponse struct {
 		FieldName         string     `json:"field_name"`
 		Field             flexString `json:"Field"`
 		HomeTeam          struct {
-			TeamName string `json:"team_name"`
+			UTeamID  flexString `json:"UTeamID"`
+			TeamName string     `json:"team_name"`
 		} `json:"home_team"`
 		VisitorTeam struct {
-			TeamName string `json:"team_name"`
+			UTeamID  flexString `json:"UTeamID"`
+			TeamName string     `json:"team_name"`
 		} `json:"visitor_team"`
 	} `json:"games"`
 }
@@ -161,10 +163,19 @@ func (c *Client) Team(ctx context.Context, teamID string) (Team, error) {
 		if g.SchedGameDateTime == "" || g.HomeTeam.TeamName == "" || g.VisitorTeam.TeamName == "" {
 			continue
 		}
-		// Prefer the field's name, falling back to its number.
-		field := strings.TrimPrefix(g.FieldName, "Field ")
+		// Prefer the field's name, falling back to its number. A numbered
+		// field ("Field 3") is kept as its number alone; a field the league
+		// names any other way is kept as given, so nothing is lost before a
+		// person reads it.
+		field := strings.TrimSpace(g.FieldName)
+		switch n, ok := FieldNumber(field); {
+		case ok:
+			field = n
+		case strings.EqualFold(field, "Field"):
+			field = "" // the word alone names nothing
+		}
 		if field == "" && g.Field != "0" {
-			field = string(g.Field)
+			field = strings.TrimSpace(string(g.Field))
 		}
 		if field == "" {
 			continue
@@ -178,11 +189,13 @@ func (c *Client) Team(ctx context.Context, teamID string) (Team, error) {
 			gameID = string(g.GameID)
 		}
 		team.Games = append(team.Games, Game{
-			ID:    gameID,
-			Start: start,
-			Field: field,
-			Home:  g.HomeTeam.TeamName,
-			Away:  g.VisitorTeam.TeamName,
+			ID:     gameID,
+			Start:  start,
+			Field:  field,
+			Home:   g.HomeTeam.TeamName,
+			Away:   g.VisitorTeam.TeamName,
+			HomeID: strings.TrimSpace(string(g.HomeTeam.UTeamID)),
+			AwayID: strings.TrimSpace(string(g.VisitorTeam.UTeamID)),
 		})
 	}
 	return team, nil

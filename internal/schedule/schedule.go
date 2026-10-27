@@ -54,7 +54,8 @@ func (s Schedule) Unavailable() bool {
 }
 
 // Game is a game in a combined schedule. TeamIDs names the chosen Teams that
-// play in it, so a game between two of them appears once.
+// play in it, so a game between two of them appears once. HomeID and AwayID
+// are the two sides' Team IDs when the league names them.
 type Game struct {
 	ID        string    `json:"id"`
 	Start     time.Time `json:"start"`
@@ -62,6 +63,8 @@ type Game struct {
 	Field     string    `json:"field"`
 	Home      string    `json:"home"`
 	Away      string    `json:"away"`
+	HomeID    string    `json:"home_id,omitempty"`
+	AwayID    string    `json:"away_id,omitempty"`
 	TeamIDs   []string  `json:"team_ids"`
 	Remaining bool      `json:"remaining"`
 }
@@ -175,6 +178,8 @@ func Combine(ctx context.Context, src league.Teams, teamIDs []string, now time.T
 				Field:     lg.Field,
 				Home:      lg.Home,
 				Away:      lg.Away,
+				HomeID:    lg.HomeID,
+				AwayID:    lg.AwayID,
 				TeamIDs:   []string{t.ID},
 				Remaining: !lg.Start.Before(now),
 			})

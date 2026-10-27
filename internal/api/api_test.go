@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -47,6 +48,15 @@ func (f fakeTeams) Team(_ context.Context, id string) (league.Team, error) {
 		return league.Team{ID: id, Name: "KICKERS", Season: "173", Games: []league.Game{
 			{ID: "g3", Start: at(14, 19), Field: "2", Home: "ROVERS", Away: "KICKERS"},
 			{ID: "g2", Start: at(14, 18), Field: "4", Home: "KICKERS", Away: "OWLS"},
+		}}, nil
+	case "444444":
+		// The league names each side's Team ID. OWLS plays away in g2 and
+		// g6 and at home in g7; in g6 and g7 the league also spells the Team
+		// differently from its own record, so only its ID finds its side.
+		return league.Team{ID: id, Name: "OWLS", Season: "173", Games: []league.Game{
+			{ID: "g2", Start: at(14, 18), Field: "4", Home: "KICKERS", Away: "OWLS", HomeID: "222222", AwayID: "444444"},
+			{ID: "g6", Start: at(21, 19), Field: "3", Home: "HAWKS", Away: "OWLS FC", HomeID: "555555", AwayID: "444444"},
+			{ID: "g7", Start: at(28, 19), Field: "1", Home: "OWLS FC", Away: "BANDITS", HomeID: "444444", AwayID: "666666"},
 		}}, nil
 	}
 	return league.Team{}, league.ErrTeamNotFound
@@ -229,6 +239,10 @@ func TestDownload(t *testing.T) {
 	if strings.Count(body, "BEGIN:VEVENT") != 1 || !strings.Contains(body, "UID:game-g3@") {
 		t.Fatalf("events:\n%s", body)
 	}
+	// A game between two chosen Teams keeps the league's Home vs Away order.
+	if !strings.Contains(strings.ReplaceAll(body, "\r\n ", ""), "SUMMARY:ROVERS vs KICKERS - Field 2\r\n") {
+		t.Fatalf("title:\n%s", body)
+	}
 	if !strings.Contains(logs.String(), `"route":"/calendar"`) {
 		t.Fatalf("output not logged: %s", logs)
 	}
@@ -237,6 +251,67 @@ func TestDownload(t *testing.T) {
 		if rec := do(t, h, "POST", "/calendar", bad); rec.Code != http.StatusBadRequest {
 			t.Errorf("%s: %d", bad, rec.Code)
 		}
+	}
+}
+
+// Every title puts the calendar's own Team first, then the field, in a
+// download and in a Session link alike. The Team's side comes from the Team
+// IDs the league puts on the game when it gives them, else from its name.
+func TestCalendarTitlesPutTheTeamFirst(t *testing.T) {
+	h, _ := newServer(t, fakeTeams{}, fakeDirectory{})
+	summaries := func(body string) []string {
+		var out []string
+		// Content lines longer than 75 octets are folded onto a continuation.
+		body = strings.ReplaceAll(body, "\r\n ", "")
+		for _, line := range strings.Split(body, "\r\n") {
+			if strings.HasPrefix(line, "SUMMARY:") {
+				out = append(out, strings.TrimPrefix(line, "SUMMARY:"))
+			}
+		}
+		return out
+	}
+	tests := []struct {
+		name  string
+		teams string
+		want  []string
+	}{
+		// OWLS is the visitor in g2 and g6 and at home in g7; g6 and g7 are
+		// matched by Team ID, since the league writes the Team as OWLS FC.
+		{"team by its side's ID, away and home", `["444444"]`, []string{"OWLS vs KICKERS - Field 4", "OWLS FC vs HAWKS - Field 3", "OWLS FC vs BANDITS - Field 1"}},
+		// KICKERS' games carry no side IDs, so its name finds its side.
+		{"team by name", `["222222"]`, []string{"KICKERS vs OWLS - Field 4", "KICKERS vs ROVERS - Field 2"}},
+		// A game between two chosen Teams keeps Home vs Away, whichever of
+		// them the person chose first.
+		{"shared game", `["222222","444444"]`, []string{"KICKERS vs OWLS - Field 4", "KICKERS vs ROVERS - Field 2", "OWLS FC vs HAWKS - Field 3", "OWLS FC vs BANDITS - Field 1"}},
+		{"shared game, away Team chosen first", `["444444","222222"]`, []string{"KICKERS vs OWLS - Field 4", "KICKERS vs ROVERS - Field 2", "OWLS FC vs HAWKS - Field 3", "OWLS FC vs BANDITS - Field 1"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := do(t, h, "POST", "/calendar", `{"team_ids":`+tt.teams+`}`)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("%d %s", rec.Code, rec.Body)
+			}
+			if got := summaries(rec.Body.String()); !slices.Equal(got, tt.want) {
+				t.Fatalf("download titles = %q, want %q", got, tt.want)
+			}
+			created := decode[struct{ Token string }](t, do(t, h, "POST", "/links", `{"team_ids":`+tt.teams+`}`))
+			rec = do(t, h, "GET", "/links/"+created.Token+".ics", "")
+			if rec.Code != http.StatusOK {
+				t.Fatalf("%d %s", rec.Code, rec.Body)
+			}
+			if got := summaries(rec.Body.String()); !slices.Equal(got, tt.want) {
+				t.Fatalf("link titles = %q, want %q", got, tt.want)
+			}
+		})
+	}
+	// The description repeats the matchup in the title's order.
+	body := do(t, h, "POST", "/calendar", `{"team_ids":["444444"]}`).Body.String()
+	if !strings.Contains(body, "DESCRIPTION:Field 4\\nOWLS vs KICKERS\\nLet's Play Soccer\\, Boise\r\n") {
+		t.Fatalf("description:\n%s", body)
+	}
+	// The schedule the page reads carries each side's Team ID too.
+	if s := do(t, h, "GET", "/teams/444444", "").Body.String(); !strings.Contains(s, `"home_id":"222222","away_id":"444444"`) {
+		t.Fatalf("schedule JSON: %s", s)
 	}
 }
 

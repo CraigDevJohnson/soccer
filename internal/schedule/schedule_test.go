@@ -34,7 +34,7 @@ var teams = fakeTeams{
 	}},
 	"222222": {ID: "222222", Name: "KICKERS", Season: "173", Games: []league.Game{
 		{ID: "g3", Start: at(14, 19), Field: "2", Home: "ROVERS", Away: "KICKERS"},
-		{ID: "g2", Start: at(14, 18), Field: "4", Home: "KICKERS", Away: "OWLS"},
+		{ID: "g2", Start: at(14, 18), Field: "4", Home: "KICKERS", Away: "OWLS", HomeID: "222222", AwayID: "444444"},
 		{ID: "", Start: at(21, 18), Field: "4", Home: "OWLS", Away: "KICKERS"},
 	}},
 }
@@ -64,6 +64,9 @@ func TestCombineMergesSortsAndMarksRemaining(t *testing.T) {
 	}
 	if s.Games[0].Remaining || !s.Games[1].Remaining {
 		t.Fatalf("remaining flags wrong: %+v", s.Games[:2])
+	}
+	if g := s.Games[1]; g.HomeID != "222222" || g.AwayID != "444444" {
+		t.Fatalf("side IDs lost: %+v", g)
 	}
 	shared := s.Games[2]
 	if len(shared.TeamIDs) != 2 {

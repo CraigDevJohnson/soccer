@@ -75,12 +75,67 @@ func TestTeamParsesGamesInMountainTime(t *testing.T) {
 	if !g.Start.Equal(want) || g.Field != "3" || g.Home != "ROVERS" || g.Away != "KICKERS" {
 		t.Fatalf("game 0 = %+v, want start %v", g, want)
 	}
+	if g.HomeID != "123456" || g.AwayID != "222222" {
+		t.Fatalf("game 0 sides = %q and %q, want the league's UTeamID on each", g.HomeID, g.AwayID)
+	}
+	if g := team.Games[1]; g.HomeID != "" || g.AwayID != "" {
+		t.Fatalf("game 1 sides should be empty without UTeamID: %+v", g)
+	}
 	// "Z" is ignored: 19:15 is Boise wall-clock time, which is 01:15 UTC next day in October.
 	if got := g.Start.UTC().Format("2006-01-02T15:04"); got != "2026-10-15T01:15" {
 		t.Fatalf("UTC = %s", got)
 	}
 	if team.Games[1].Field != "2" {
 		t.Fatalf("field fallback to number: %+v", team.Games[1])
+	}
+}
+
+// A numbered field is kept as its number; a field the league names any
+// other way is kept whole; a blank name falls back to the number, and a row
+// with neither is unscheduled.
+func TestTeamFieldNames(t *testing.T) {
+	const body = `{"team": {"UTeamID": 123456, "team_name": "ROVERS", "FacilityID": 4}, "games": [
+	  {"UGameID": 1, "SchedGameDateTime": "2026-10-14T19:15:00Z", "field_name": "Field 3", "Field": 3,
+	   "home_team": {"team_name": "ROVERS"}, "visitor_team": {"team_name": "KICKERS"}},
+	  {"UGameID": 2, "SchedGameDateTime": "2026-10-14T19:15:00Z", "field_name": "Field 3A", "Field": 3,
+	   "home_team": {"team_name": "ROVERS"}, "visitor_team": {"team_name": "KICKERS"}},
+	  {"UGameID": 3, "SchedGameDateTime": "2026-10-14T19:15:00Z", "field_name": "Field 3 North", "Field": 3,
+	   "home_team": {"team_name": "ROVERS"}, "visitor_team": {"team_name": "KICKERS"}},
+	  {"UGameID": 4, "SchedGameDateTime": "2026-10-14T19:15:00Z", "field_name": "North Court", "Field": 0,
+	   "home_team": {"team_name": "ROVERS"}, "visitor_team": {"team_name": "KICKERS"}},
+	  {"UGameID": 5, "SchedGameDateTime": "2026-10-14T19:15:00Z", "field_name": " ", "Field": 2,
+	   "home_team": {"team_name": "ROVERS"}, "visitor_team": {"team_name": "KICKERS"}},
+	  {"UGameID": 6, "SchedGameDateTime": "2026-10-14T19:15:00Z", "field_name": "Field ", "Field": 4,
+	   "home_team": {"team_name": "ROVERS"}, "visitor_team": {"team_name": "KICKERS"}},
+	  {"UGameID": 7, "SchedGameDateTime": "2026-10-14T19:15:00Z", "field_name": "  ", "Field": 0,
+	   "home_team": {"team_name": "ROVERS"}, "visitor_team": {"team_name": "KICKERS"}}
+	]}`
+	c, _ := serve(t, http.StatusOK, body)
+	team, err := c.Team(context.Background(), "123456")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"1": "3", "2": "3A", "3": "Field 3 North", "4": "North Court", "5": "2", "6": "4"}
+	if len(team.Games) != len(want) {
+		t.Fatalf("got %d games, want %d (the row with no field is unscheduled): %+v", len(team.Games), len(want), team.Games)
+	}
+	for _, g := range team.Games {
+		if g.Field != want[g.ID] {
+			t.Errorf("game %s field = %q, want %q", g.ID, g.Field, want[g.ID])
+		}
+	}
+}
+
+func TestFieldNumber(t *testing.T) {
+	for in, want := range map[string]string{"3": "3", "Field 3": "3", " Field 12B ": "12B", "3A": "3A"} {
+		if n, ok := FieldNumber(in); !ok || n != want {
+			t.Errorf("FieldNumber(%q) = %q, %v; want %q", in, n, ok, want)
+		}
+	}
+	for _, in := range []string{"", " ", "Field", "Field 3 North", "North Court", "Field A", "3AB"} {
+		if n, ok := FieldNumber(in); ok {
+			t.Errorf("FieldNumber(%q) = %q, true; want not a number", in, n)
+		}
 	}
 }
 

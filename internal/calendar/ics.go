@@ -26,7 +26,11 @@ const (
 	uidDomain       = "soccer.craigdevjohnson.com"
 )
 
-// Event is one game to write.
+// Event is one game to write. Home and Away are the two sides as the league
+// lists them. Team is the Team this calendar is for that plays in the game,
+// written as the league names that side; the title puts it first. It is
+// empty when the calendar is for both sides, or for neither, and the title
+// then keeps the league's Home vs Away order.
 type Event struct {
 	GameID string
 	Start  time.Time
@@ -34,6 +38,46 @@ type Event struct {
 	Field  string
 	Home   string
 	Away   string
+	Team   string
+}
+
+// Title is the event's summary line: the person's Team, its opponent and
+// the field, such as "ROVERS vs KICKERS - Field 3", so a glance at the
+// calendar says where the game is. The field is left off only when the
+// league gave none. A field the league names rather than numbers is written
+// as given, "North Court" rather than "Field North Court".
+func Title(e Event) string {
+	title := matchup(e)
+	if field := FieldLabel(e.Field); field != "" {
+		title += " - " + field
+	}
+	return title
+}
+
+// matchup is "<Team> vs <opponent>": e.Team first when it is one side and
+// not the other, else Home vs Away.
+func matchup(e Event) string {
+	first, second := e.Home, e.Away
+	if sameTeam(e.Team, e.Away) && !sameTeam(e.Team, e.Home) {
+		first, second = e.Away, e.Home
+	}
+	return fmt.Sprintf("%s vs %s", first, second)
+}
+
+// sameTeam compares two Team names as the league might vary them: trimmed,
+// ignoring case. Two empty names are not the same Team.
+func sameTeam(a, b string) bool {
+	a, b = strings.TrimSpace(a), strings.TrimSpace(b)
+	return a != "" && strings.EqualFold(a, b)
+}
+
+// FieldLabel names a field for a person: "Field 3" for a field the league
+// numbers, a field it names as it is, "" for none.
+func FieldLabel(field string) string {
+	if n, ok := league.FieldNumber(field); ok {
+		return "Field " + n
+	}
+	return strings.TrimSpace(field)
 }
 
 // Notice is an all-day note on one day, with no reminder and shown as
@@ -73,11 +117,11 @@ func Write(c Calendar, stamp time.Time) (string, error) {
 
 	for _, e := range c.Events {
 		ev := cal.AddEvent(fmt.Sprintf("game-%s@%s", e.GameID, uidDomain))
-		ev.SetSummary(fmt.Sprintf("%s vs %s", e.Home, e.Away))
+		ev.SetSummary(Title(e))
 		ev.AddProperty(ics.ComponentPropertyDtStart, e.Start.In(loc).Format("20060102T150405"), ics.WithTZID(TimezoneName))
 		ev.AddProperty(ics.ComponentPropertyDtEnd, e.End.In(loc).Format("20060102T150405"), ics.WithTZID(TimezoneName))
 		ev.SetLocation(Location)
-		ev.SetDescription(fmt.Sprintf("Field %s\n%s vs %s\nLet's Play Soccer, Boise", e.Field, e.Home, e.Away))
+		ev.SetDescription(description(e))
 		ev.SetDtStampTime(stamp.UTC())
 
 		alarm := ev.AddAlarm()
@@ -97,6 +141,17 @@ func Write(c Calendar, stamp time.Time) (string, error) {
 	}
 	// iCalendar content lines end in CRLF (RFC 5545 §3.1).
 	return cal.Serialize(ics.WithNewLineWindows), nil
+}
+
+// description is the event's longer text: the field, the matchup in the
+// title's order, and the place.
+func description(e Event) string {
+	lines := []string{}
+	if field := FieldLabel(e.Field); field != "" {
+		lines = append(lines, field)
+	}
+	lines = append(lines, matchup(e), "Let's Play Soccer, Boise")
+	return strings.Join(lines, "\n")
 }
 
 // addTimezone writes America/Denver's rules so calendar apps read each local

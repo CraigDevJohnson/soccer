@@ -13,9 +13,10 @@ func TestWrite(t *testing.T) {
 	out, err := Write(Calendar{
 		Name: "ROVERS + KICKERS",
 		Events: []Event{
-			{GameID: "g1", Start: start, End: start.Add(45 * time.Minute), Field: "3", Home: "ROVERS", Away: "KICKERS"},
-			// A UTC time is still written as Boise wall-clock time.
-			{GameID: "g2", Start: time.Date(2026, 11, 10, 2, 0, 0, 0, time.UTC), End: time.Date(2026, 11, 10, 2, 45, 0, 0, time.UTC), Field: "1", Home: "OWLS", Away: "ROVERS"},
+			{GameID: "g1", Start: start, End: start.Add(45 * time.Minute), Field: "3", Home: "ROVERS", Away: "KICKERS", Team: "ROVERS"},
+			// A UTC time is still written as Boise wall-clock time, and the
+			// calendar's Team comes first even when it plays away.
+			{GameID: "g2", Start: time.Date(2026, 11, 10, 2, 0, 0, 0, time.UTC), End: time.Date(2026, 11, 10, 2, 45, 0, 0, time.UTC), Field: "1", Home: "OWLS", Away: "ROVERS", Team: "ROVERS"},
 		},
 	}, stamp)
 	if err != nil {
@@ -33,7 +34,10 @@ func TestWrite(t *testing.T) {
 		"DTSTART;TZID=America/Denver:20261102T191500",
 		"DTEND;TZID=America/Denver:20261102T200000",
 		"DTSTART;TZID=America/Denver:20261109T190000",
-		"SUMMARY:ROVERS vs KICKERS",
+		"SUMMARY:ROVERS vs KICKERS - Field 3\r\n",
+		"DESCRIPTION:Field 3\\nROVERS vs KICKERS\\nLet's Play Soccer\\, Boise\r\n",
+		"SUMMARY:ROVERS vs OWLS - Field 1\r\n",
+		"DESCRIPTION:Field 1\\nROVERS vs OWLS\\nLet's Play Soccer\\, Boise\r\n",
 		"LOCATION:Let's Play Soccer\\, Boise",
 		"TRIGGER:-PT40M",
 		"DTSTAMP:20261010T000000Z",
@@ -52,6 +56,49 @@ func TestWrite(t *testing.T) {
 	// Every content line ends in CRLF, and none in a bare LF.
 	if strings.Count(out, "\r\n") != strings.Count(out, "\n") || !strings.HasSuffix(out, "END:VCALENDAR\r\n") {
 		t.Errorf("line endings are not CRLF:\n%q", out[:60])
+	}
+}
+
+// A title names the calendar's Team, then its opponent, then the field, so
+// the calendar says where the game is at a glance. Home vs Away is the
+// fallback when the Team is not one side alone.
+func TestTitle(t *testing.T) {
+	tests := []struct {
+		name string
+		e    Event
+		want string
+	}{
+		{"team at home", Event{Home: "ROVERS", Away: "KICKERS", Team: "ROVERS", Field: "3"}, "ROVERS vs KICKERS - Field 3"},
+		{"team away", Event{Home: "OWLS", Away: "ROVERS", Team: "ROVERS", Field: "1"}, "ROVERS vs OWLS - Field 1"},
+		{"name as the league varies it", Event{Home: "OWLS", Away: "ROVERS", Team: " rovers ", Field: "1"}, "ROVERS vs OWLS - Field 1"},
+		{"both sides are the calendar's", Event{Home: "OWLS", Away: "ROVERS", Field: "1"}, "OWLS vs ROVERS - Field 1"},
+		{"team not in the game", Event{Home: "OWLS", Away: "ROVERS", Team: "BANDITS", Field: "1"}, "OWLS vs ROVERS - Field 1"},
+		{"both sides carry the name", Event{Home: "ROVERS", Away: "ROVERS", Team: "ROVERS", Field: "2"}, "ROVERS vs ROVERS - Field 2"},
+		{"no field from the league", Event{Home: "OWLS", Away: "ROVERS", Team: "ROVERS"}, "ROVERS vs OWLS"},
+		{"blank field", Event{Home: "OWLS", Away: "ROVERS", Team: "ROVERS", Field: " "}, "ROVERS vs OWLS"},
+		{"field number with a letter", Event{Home: "OWLS", Away: "ROVERS", Team: "ROVERS", Field: "3A"}, "ROVERS vs OWLS - Field 3A"},
+		{"field the league names", Event{Home: "OWLS", Away: "ROVERS", Team: "ROVERS", Field: "North Court"}, "ROVERS vs OWLS - North Court"},
+		{"field already labelled", Event{Home: "OWLS", Away: "ROVERS", Team: "ROVERS", Field: "Field 2"}, "ROVERS vs OWLS - Field 2"},
+		{"field named after its number", Event{Home: "OWLS", Away: "ROVERS", Team: "ROVERS", Field: "Field 3 North"}, "ROVERS vs OWLS - Field 3 North"},
+		{"field named with the word", Event{Home: "OWLS", Away: "ROVERS", Team: "ROVERS", Field: "Field North"}, "ROVERS vs OWLS - Field North"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := Title(tt.e); got != tt.want {
+				t.Errorf("Title(%+v) = %q, want %q", tt.e, got, tt.want)
+			}
+		})
+	}
+}
+
+// The description keeps the field on its own line and the matchup in the
+// title's order; a game with no field has no empty line.
+func TestDescription(t *testing.T) {
+	if got := description(Event{Home: "OWLS", Away: "ROVERS", Team: "ROVERS", Field: "1"}); got != "Field 1\nROVERS vs OWLS\nLet's Play Soccer, Boise" {
+		t.Errorf("description = %q", got)
+	}
+	if got := description(Event{Home: "OWLS", Away: "ROVERS"}); got != "OWLS vs ROVERS\nLet's Play Soccer, Boise" {
+		t.Errorf("description without a field = %q", got)
 	}
 }
 
