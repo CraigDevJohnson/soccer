@@ -304,9 +304,10 @@ func TestCalendarTitlesPutTheTeamFirst(t *testing.T) {
 			}
 		})
 	}
-	// The description repeats the matchup in the title's order.
+	// The description keeps the league's Home vs Away, though the title
+	// puts OWLS first.
 	body := do(t, h, "POST", "/calendar", `{"team_ids":["444444"]}`).Body.String()
-	if !strings.Contains(body, "DESCRIPTION:Field 4\\nOWLS vs KICKERS\\nLet's Play Soccer\\, Boise\r\n") {
+	if !strings.Contains(body, "DESCRIPTION:Field 4\\nKICKERS vs OWLS\\nLet's Play Soccer\\, Boise\r\n") {
 		t.Fatalf("description:\n%s", body)
 	}
 	// The schedule the page reads carries each side's Team ID too.

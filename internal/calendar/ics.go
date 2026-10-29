@@ -143,14 +143,15 @@ func Write(c Calendar, stamp time.Time) (string, error) {
 	return cal.Serialize(ics.WithNewLineWindows), nil
 }
 
-// description is the event's longer text: the field, the matchup in the
-// title's order, and the place.
+// description is the event's longer text: the field, the game as the
+// league lists it, Home vs Away, and the place. Only the title puts the
+// calendar's Team first.
 func description(e Event) string {
 	lines := []string{}
 	if field := FieldLabel(e.Field); field != "" {
 		lines = append(lines, field)
 	}
-	lines = append(lines, matchup(e), "Let's Play Soccer, Boise")
+	lines = append(lines, fmt.Sprintf("%s vs %s", e.Home, e.Away), "Let's Play Soccer, Boise")
 	return strings.Join(lines, "\n")
 }
 
