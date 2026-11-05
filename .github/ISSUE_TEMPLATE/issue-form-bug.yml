@@ -1,0 +1,47 @@
+name: Bug report
+description: Something the Let's Plan Soccer backend does is wrong
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Please leave Session link tokens out of the report: a link carries one person's choice of Teams, and anyone holding it can read that calendar. Team IDs are fine.
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened
+      description: What went wrong, and any error code the backend answered (such as `league_unavailable`).
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: How to see it again.
+      placeholder: |
+        1. Search for a Team named ...
+        2. Untick the game on ...
+        3. Download the calendar
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Where and when
+      description: Production, dev or a local run, the time you saw it, the Team IDs involved, and the calendar app if it was a Session link.
+    validations:
+      required: false
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Confirmation
+      options:
+        - label: I searched the existing issues and this is not a duplicate
+          required: true

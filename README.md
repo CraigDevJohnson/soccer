@@ -1,5 +1,8 @@
 # soccer
 
+[![CI](https://github.com/CraigDevJohnson/soccer/actions/workflows/ci.yml/badge.svg)](https://github.com/CraigDevJohnson/soccer/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 **Let's Plan Soccer.** Link. Plan. Score
 
 The Let's Plan Soccer backend: it puts a Let's Play Soccer Team's games into a calendar. It is unofficial and not affiliated with Let's Play Soccer.
@@ -72,6 +75,10 @@ task infra:check  # format, validate and test infra/ and infra/bootstrap offline
 ## Deploying it
 
 `infra/` is the OpenTofu for one deployment: the function, its Function URL that only the site's role may call, its log group and two alarms. There are two deployments, dev and production, one per site environment, and their inputs are committed in `infra/environments/`. GitHub Actions deploys them: `CI` runs `task ci` on every pull request and never touches AWS, and `Deploy` builds `main`, applies dev, then applies production once Craig approves it in GitHub. The deploy roles it signs in with are `infra/bootstrap`, applied by hand once. On a computer, `task infra:plan` (`ENV=prod` for production) is for testing. [docs/operations/deploy.md](docs/operations/deploy.md) has the details and the one-time setup.
+
+## Contributing
+
+Issues and pull requests are welcome; [CONTRIBUTING.md](CONTRIBUTING.md) has the conventions. Report a security problem privately, as [SECURITY.md](SECURITY.md) says.
 
 ## Licence
 

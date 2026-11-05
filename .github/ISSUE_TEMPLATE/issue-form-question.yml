@@ -1,0 +1,22 @@
+name: Question
+description: Ask how the backend works or why it works that way
+title: "[Question]: "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Questions are welcome. The README explains each route and the reasons behind it, so it may already have the answer.
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What you have already read or tried.
+    validations:
+      required: false
