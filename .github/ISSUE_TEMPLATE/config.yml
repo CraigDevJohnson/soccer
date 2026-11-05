@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: The /soccer page, sign-in or Member access
+    url: https://github.com/CraigDevJohnson/the-lobby/issues
+    about: The Lobby owns every screen and sign-in; report those there
+  - name: Security problem
+    url: https://github.com/CraigDevJohnson/soccer/security/policy
+    about: Report it privately as the security policy says, never in a public issue

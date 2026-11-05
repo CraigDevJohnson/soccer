@@ -1,0 +1,31 @@
+name: Feature request
+description: Suggest something the backend should do
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a feature. Changes to the page itself belong in [The Lobby](https://github.com/CraigDevJohnson/the-lobby/issues).
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What gets in the way today, and for whom?
+      placeholder: When I follow two Teams, ...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What you would like the backend to do instead.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds or other approaches you have tried.
+    validations:
+      required: false
