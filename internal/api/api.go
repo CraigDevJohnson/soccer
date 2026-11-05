@@ -72,6 +72,7 @@ func (h *Handler) Router() http.Handler {
 	r.Post("/links", h.createLink)
 	r.Get("/links/{token}", h.serveLink)
 	r.Post("/feeds", h.feed)
+	r.Post("/events", h.googleEvents)
 	return r
 }
 
@@ -212,6 +213,22 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/calendar; charset=utf-8")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename=%q`, calendar.Filename(teamNames(s))))
 	_, _ = w.Write([]byte(body))
+}
+
+// POST /events: the chosen games as Google Calendar event bodies, for the
+// site to write into a Member's Google calendar when they press Add. It
+// takes POST /calendar's body and, like it, refuses rather than leave a
+// Team's games out. No Google token ever reaches this backend.
+func (h *Handler) googleEvents(w http.ResponseWriter, r *http.Request) {
+	sel, ok := h.readChoice(w, r)
+	if !ok {
+		return
+	}
+	s, ok := h.wholeSchedule(w, r, sel.TeamIDs)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"events": calendar.GoogleEvents(calendarEvents(s, sel))})
 }
 
 // POST /links: a Session link for the chosen games. The Teams are read first
