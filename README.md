@@ -25,6 +25,7 @@ Boise only. A person finds a Team by Team ID, by name search, or by browsing the
 | `POST /links` | A Session link for the chosen games: `{token, url, teams, failed}` |
 | `GET /links/{token}` (or `{token}.ics`) | What a calendar app fetches: the chosen games, read afresh from the league, and a notice once a Team's Session is over. `HEAD` works too |
 | `POST /feeds` | The calendar behind a Member link, and its Remembered teams moved on to their next Session: `{calendar, teams}` (see Member links) |
+| `POST /events` | The chosen games as Google Calendar event bodies, for the site to write into a Member's Google calendar: `{events}` (see Google Calendar events) |
 | `GET /healthz` | 204 |
 
 `POST /calendar` and `POST /links` take the Teams and only what the person changed from the default:
@@ -68,6 +69,15 @@ and gets back the calendar text and the Remembered teams as they now are, which 
 Before the Teams are read, each Remembered team's newest Team ID goes through the next-Session finder (`GET /teams/{teamID}/next`), at most four at a time within two seconds. On `follow`, the new Team ID goes in front and only the two newest are kept, so the calendar keeps the Session before and gets the new Team's games as soon as the league posts them, and anything older drops off. A check that fails or runs out of time leaves that team as it is until a later fetch and writes a `follow_check_failed` line, never `league_unavailable`, so the league alarm stays quiet. A Team ID the league no longer knows has nowhere to go, and a team never follows into a Team the Member already keeps as a Remembered team of its own, or into one that an earlier team in the list follows into on the same fetch.
 
 The calendar, named "Let's Plan Soccer", holds every game, played and remaining, of every Team ID, titled as a Session link's are. It fails as a Session link does: a 503 when the league fails for any Team, and an empty calendar when the list is empty or the league knows none of its Team IDs. When a Remembered team's Session is over and there was no Team to follow, its newest Team ID gets the end-of-Session notice, worded for a Member: next Session's Team, picked on `/soccer?after=…`, joins this same calendar. A Remembered team's older Team ID is the Session before, so it never gets the notice or goes in `after`.
+
+## Google Calendar events
+
+A signed-in Member with access can have the site write the games they ticked straight into a Google calendar they pick, when they press Add. The site does all the Google work and holds the Member's Google access; this backend never sees a Google token. It sends `POST /events` the same body as `POST /calendar` and gets back the same games as Google Calendar event bodies, `{"events": [...]}`, which it inserts, or updates when the event is already there:
+
+- The same title, description, place, 45 minutes and Mountain time as a download, with a 40-minute pop-up reminder, `"status": "confirmed"` and a private `game_id` property.
+- The event ID is the league's numeric game ID, as craigdevjohnson.com's earlier Let's Plan Soccer used, so a game added there is updated rather than added twice. Google allows only `0-9` and `a-v` in an ID, and at least 5 of them, so any other key, such as a shorter game ID or the `20261108T1830-North Court` kept for a game the league gave no ID, is `lps` followed by the key in lowercase, unpadded base32hex.
+
+It fails as a download does, with nothing left out.
 
 ## Logs
 

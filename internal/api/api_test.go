@@ -19,6 +19,7 @@ import (
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/awslabs/aws-lambda-go-api-proxy/httpadapter"
 
+	"github.com/CraigDevJohnson/soccer/internal/calendar"
 	"github.com/CraigDevJohnson/soccer/internal/league"
 	"github.com/CraigDevJohnson/soccer/internal/next"
 )
@@ -251,6 +252,28 @@ func TestDownload(t *testing.T) {
 		if rec := do(t, h, "POST", "/calendar", bad); rec.Code != http.StatusBadRequest {
 			t.Errorf("%s: %d", bad, rec.Code)
 		}
+	}
+}
+
+// POST /events answers the same games as a download, as Google Calendar
+// event bodies, and fails as a download does.
+func TestGoogleEventBodies(t *testing.T) {
+	h, _ := newServer(t, fakeTeams{}, fakeDirectory{})
+	rec := do(t, h, "POST", "/events", `{"team_ids":["111111","222222"],"excluded":["g2"]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	got := decode[struct{ Events []calendar.GoogleEvent }](t, rec).Events
+	if len(got) != 1 || got[0].Summary != "ROVERS vs KICKERS - Field 2" || got[0].ID != calendar.GoogleEventID("g3") ||
+		got[0].ExtendedProperties.Private["game_id"] != "g3" || got[0].Reminders.Overrides[0].Minutes != 40 {
+		t.Fatalf("events = %+v", got)
+	}
+	if rec := do(t, h, "POST", "/events", `{"team_ids":["111111"],"calendar_id":"primary"}`); rec.Code != http.StatusBadRequest {
+		t.Errorf("unknown field: %d", rec.Code)
+	}
+	down, _ := newServer(t, fakeTeams{down: true}, fakeDirectory{})
+	if rec := do(t, down, "POST", "/events", `{"team_ids":["111111"]}`); rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("league down: %d %s", rec.Code, rec.Body)
 	}
 }
 
