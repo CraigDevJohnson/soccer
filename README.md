@@ -24,6 +24,7 @@ Boise only. A person finds a Team by Team ID, by name search, or by browsing the
 | `POST /calendar` | The chosen games as an .ics download |
 | `POST /links` | A Session link for the chosen games: `{token, url, teams, failed}` |
 | `GET /links/{token}` (or `{token}.ics`) | What a calendar app fetches: the chosen games, read afresh from the league, and a notice once a Team's Session is over. `HEAD` works too |
+| `POST /feeds` | The calendar behind a Member link, and its Remembered teams moved on to their next Session: `{calendar, teams}` (see Member links) |
 | `GET /healthz` | 204 |
 
 `POST /calendar` and `POST /links` take the Teams and only what the person changed from the default:
@@ -50,9 +51,27 @@ A Session link is good for one Session. Once a Team in it has no game left to pl
 
 `GET /teams/{teamID}/next` is what that page asks. It looks in the Team list for the Team's name, trimmed and ignoring case, in the earliest later Session that has it, leaving out Teams that dropped out and one-day events such as a Saturday tournament. `follow` is exactly one such Team, with the same coach; `ask` is one or more for the person to choose from, each marked `same_coach` or not; `none` is none yet, with the same coach's Teams under other names in `similar` when there are no more than three; a coach id with more is the league's own club Teams, so none of them is offered. The coach is compared, never named: no answer or log line carries a coach id. Measured on 2026-10-12, the same name and coach found a Team's next Session 86% of the time.
 
+## Member links
+
+A Member link is a signed-in Member's own calendar address, which follows their Teams from one Session to the next. The site keeps the Member's Remembered teams, at most five, and serves the address; nothing about a Member is stored here. Each Remembered team is its Team IDs, newest first, at most two. On every fetch the site sends them to `POST /feeds`:
+
+```json
+{"teams": [["223344", "123456"], ["654321"]]}
+```
+
+and gets back the calendar text and the Remembered teams as they now are, which it keeps when they changed:
+
+```json
+{"calendar": "BEGIN:VCALENDAR…", "teams": [["334455", "223344"], ["654321"]]}
+```
+
+Before the Teams are read, each Remembered team's newest Team ID goes through the next-Session finder (`GET /teams/{teamID}/next`), at most four at a time within two seconds. On `follow`, the new Team ID goes in front and only the two newest are kept, so the calendar keeps the Session before and gets the new Team's games as soon as the league posts them, and anything older drops off. A check that fails or runs out of time leaves that team as it is until a later fetch and writes a `follow_check_failed` line, never `league_unavailable`, so the league alarm stays quiet. A Team ID the league no longer knows has nowhere to go, and a team never follows into a Team the Member already keeps as a Remembered team of its own, or into one that an earlier team in the list follows into on the same fetch.
+
+The calendar, named "Let's Plan Soccer", holds every game, played and remaining, of every Team ID, titled as a Session link's are. It fails as a Session link does: a 503 when the league fails for any Team, and an empty calendar when the list is empty or the league knows none of its Team IDs. When a Remembered team's Session is over and there was no Team to follow, its newest Team ID gets the end-of-Session notice, worded for a Member: next Session's Team, picked on `/soccer?after=…`, joins this same calendar. A Remembered team's older Team ID is the Session before, so it never gets the notice or goes in `after`.
+
 ## Logs
 
-One JSON line per request with the route pattern (never the path, so link tokens and searches stay out), status, timing and user agent. The route of each `POST` says which output a person chose; the user agent on `/links/{token}` says which calendar app fetched a link.
+One JSON line per request with the route pattern (never the path, so link tokens and searches stay out), status, timing and user agent. The route of each `POST` says which output a person chose; the user agent on `/links/{token}` says which calendar app fetched a link. A Member link's secret never reaches this backend.
 
 ## Running it
 
