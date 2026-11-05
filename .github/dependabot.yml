@@ -1,6 +1,7 @@
 # Weekly updates: minor and patch versions arrive grouped in one pull request
 # per ecosystem, majors arrive one by one, and security fixes are grouped.
 # The cooldown skips releases younger than seven days.
+# OpenTofu providers arrive one per pull request, covering both roots at once.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -36,7 +37,9 @@ updates:
         patterns: ["*"]
 
   - package-ecosystem: opentofu
-    directories: ["/infra", "/infra/bootstrap"]
+    directories:
+      - /infra
+      - /infra/bootstrap
     schedule:
       interval: weekly
     cooldown:
@@ -46,7 +49,7 @@ updates:
     groups:
       routine:
         applies-to: version-updates
-        update-types: [minor, patch]
+        group-by: dependency-name
       security:
         applies-to: security-updates
         patterns: ["*"]
