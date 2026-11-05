@@ -75,7 +75,7 @@ The calendar, named "Let's Plan Soccer", holds every game, played and remaining,
 A signed-in Member with access can have the site write the games they ticked straight into a Google calendar they pick, when they press Add. The site does all the Google work and holds the Member's Google access; this backend never sees a Google token. It sends `POST /events` the same body as `POST /calendar` and gets back the same games as Google Calendar event bodies, `{"events": [...]}`, which it inserts, or updates when the event is already there:
 
 - The same title, description, place, 45 minutes and Mountain time as a download, with a 40-minute pop-up reminder, `"status": "confirmed"` and a private `game_id` property.
-- The event ID is the league's numeric game ID, as craigdevjohnson.com's earlier Let's Plan Soccer used, so a game added there is updated rather than added twice. Google allows only `0-9` and `a-v` in an ID, so the key kept for a game the league gave no ID, such as `20261108T1830-North Court`, is written in lowercase, unpadded base32hex.
+- The event ID is the league's numeric game ID, as craigdevjohnson.com's earlier Let's Plan Soccer used, so a game added there is updated rather than added twice. Google allows only `0-9` and `a-v` in an ID, and at least 5 of them, so any other key, such as a shorter game ID or the `20261108T1830-North Court` kept for a game the league gave no ID, is `lps` followed by the key in lowercase, unpadded base32hex.
 
 It fails as a download does, with nothing left out.
 

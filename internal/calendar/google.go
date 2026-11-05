@@ -55,13 +55,14 @@ var googleID = regexp.MustCompile(`^[0-9a-v]{5,}$`)
 // GoogleEventID is a game's event ID: the league's numeric game ID as it is,
 // which is also what craigdevjohnson.com's earlier Let's Plan Soccer used, so
 // a game added there is updated rather than added again. Any other key, such
-// as the "20261108T1830-North Court" kept for a game the league gave no ID,
-// is written in lowercase, unpadded base32hex.
+// as a game ID shorter than Google allows or the "20261108T1830-North Court"
+// kept for a game the league gave no ID, is "lps" and the key in lowercase,
+// unpadded base32hex: always 5 characters or more, and never all digits.
 func GoogleEventID(gameID string) string {
 	if googleID.MatchString(gameID) {
 		return gameID
 	}
-	return strings.ToLower(base32.HexEncoding.WithPadding(base32.NoPadding).EncodeToString([]byte(gameID)))
+	return "lps" + strings.ToLower(base32.HexEncoding.WithPadding(base32.NoPadding).EncodeToString([]byte(gameID)))
 }
 
 // GoogleEvents builds a Google Calendar event body for each game.
