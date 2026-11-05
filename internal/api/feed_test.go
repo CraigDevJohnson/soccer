@@ -141,6 +141,19 @@ func TestFeedDoesNotFollowIntoAnotherRememberedTeam(t *testing.T) {
 	}
 }
 
+// Two Remembered teams that both follow into the same Team: only the first
+// moves on, so the Team shows once.
+func TestFeedFollowsIntoATeamOnce(t *testing.T) {
+	h, _ := newHandler(fakeTeams{}, fakeDirectory{})
+	h.Next = finderFunc(func(context.Context, string) (next.Result, error) {
+		return next.Result{Match: next.Follow, Teams: []next.Candidate{{TeamSummary: league.TeamSummary{ID: "311111", Name: "ROVERS"}, SameCoach: true}}}, nil
+	})
+	got := decode[feedBody](t, do(t, h.Router(), "POST", "/feeds", `{"teams":[["111111"],["100001"]]}`))
+	if want := [][]string{{"311111", "111111"}, {"100001"}}; !slices.EqualFunc(got.Teams, want, slices.Equal) {
+		t.Fatalf("teams = %v, want %v", got.Teams, want)
+	}
+}
+
 // With no Remembered teams, or only Teams the league no longer knows, the
 // calendar is empty, not an error: a calendar app then shows nothing. The
 // league being down is different: the app keeps its last copy.

@@ -123,7 +123,8 @@ func (h *Handler) readFeed(w http.ResponseWriter, r *http.Request) ([][]string, 
 // it is until a later fetch, with a follow_check_failed line rather than
 // league_unavailable, since the calendar still answers; a Team ID the league
 // no longer knows has nowhere to go. Nor does a team whose next Team the
-// Member added as a Remembered team of its own already: the two stay apart
+// Member added as a Remembered team of its own already, or that an earlier
+// team in the list follows into on this same fetch: the teams stay apart
 // rather than showing the same Team twice.
 func (h *Handler) follow(ctx context.Context, teams [][]string) [][]string {
 	if h.Next == nil || len(teams) == 0 {
@@ -158,12 +159,14 @@ func (h *Handler) follow(ctx context.Context, teams [][]string) [][]string {
 	}
 	_ = g.Wait()
 	out := make([][]string, len(teams))
+	taken := map[string]bool{}
 	for i, t := range teams {
 		out[i] = t
 		id := found[i]
-		if id == "" || slices.ContainsFunc(teams, func(u []string) bool { return slices.Contains(u, id) }) {
+		if id == "" || taken[id] || slices.ContainsFunc(teams, func(u []string) bool { return slices.Contains(u, id) }) {
 			continue
 		}
+		taken[id] = true
 		out[i] = []string{id, t[0]}
 	}
 	return out
