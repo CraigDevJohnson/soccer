@@ -26,7 +26,7 @@ A bug fix starts with a test that fails without it.
 - CI must pass: its `Go` and `Infrastructure` jobs run on every pull request and never touch AWS. Codex reviews every pull request too.
 - Merge with Squash and merge. A merge to `main` that changes what is deployed deploys to dev, and production waits for Craig's approval; a docs-only merge deploys nothing ([docs/operations/deploy.md](docs/operations/deploy.md)).
 - Never commit secrets, state, plans, or tfvars outside `infra/environments/`. The `.gitignore` keeps most of them out.
-- GitHub Actions are pinned to a commit SHA with the version in a comment; Dependabot updates both monthly.
+- GitHub Actions are pinned to a commit SHA with the version in a comment. Dependabot checks the Actions, the Go modules and the OpenTofu providers weekly and updates the SHA and the comment together.
 
 ## Commit messages
 
@@ -42,7 +42,7 @@ Match the history: one short sentence in the imperative that says what changes, 
 | `P1` | High: breaks something people use; fix soon |
 | `P2` | Medium: normal priority |
 | `P3` | Low: nice to have |
-| `dependencies`, `github_actions`, `go` | Set by Dependabot on its pull requests |
+| `dependencies` | Set by Dependabot on its pull requests |
 
 ## Security
 

@@ -1,20 +1,54 @@
-# Monthly dependency updates, grouped so each ecosystem is one pull request.
-# Actions are pinned to commit SHAs; Dependabot updates the SHA and the
-# version comment together.
+# Weekly updates: minor and patch versions arrive grouped in one pull request
+# per ecosystem, majors arrive one by one, and security fixes are grouped.
+# The cooldown skips releases younger than seven days.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: monthly
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    labels: ["dependencies"]
     groups:
-      github-actions:
+      routine:
+        applies-to: version-updates
+        update-types: [minor, patch]
+      security:
+        applies-to: security-updates
         patterns: ["*"]
 
   - package-ecosystem: gomod
     directory: /
     schedule:
-      interval: monthly
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    labels: ["dependencies"]
     groups:
-      go-modules:
+      routine:
+        applies-to: version-updates
+        update-types: [minor, patch]
+      security:
+        applies-to: security-updates
+        patterns: ["*"]
+
+  - package-ecosystem: opentofu
+    directories:
+      - /infra
+      - /infra/bootstrap
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    labels: ["dependencies"]
+    groups:
+      routine:
+        applies-to: version-updates
+        update-types: [minor, patch]
+      security:
+        applies-to: security-updates
         patterns: ["*"]
