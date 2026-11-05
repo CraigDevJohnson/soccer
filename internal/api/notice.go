@@ -34,16 +34,20 @@ const noticeBudget = 3 * time.Second
 // written and sent, so a slow Team read leaves less time for the notices.
 const noticeHeadroom = 2 * time.Second
 
-// sessionNotices returns one notice for each Team in a Session link whose
-// Session is over, in link order. A Session link is good for one Session:
-// the notice says so and links to the site's Let's Plan Soccer page with the
-// link's Team IDs as "after", where the person can add next Session's Teams
-// and get a new link. The link itself never follows a Team into its next
-// Session.
+// sessionNotices returns one notice for each Team of ids whose Session is
+// over, in Team order. A Session link is good for one Session: the
+// notice says so and links to the site's Let's Plan Soccer page with ids as
+// "after", where the person can add next Session's Teams and get a new link.
+// The link itself never follows a Team into its next Session.
 //
-// A Team whose link also holds a Team by the same name in a later Session
-// gets no notice and is not passed on as "after": the calendar does get
-// next Session's games, from that Team, and the person chose it already.
+// For a Member link (member), ids are each Remembered team's newest Team ID:
+// its other one is the Session before by definition, so it never gets a
+// notice. Its notice says that next Session's Team, picked on the page,
+// joins this same calendar.
+//
+// A Team whose calendar also holds a Team by the same name in a later
+// Session gets no notice and is not passed on as "after": the calendar does
+// get next Session's games, from that Team, and the person chose it already.
 //
 // A division is looked up only once every game a Team has is past, each
 // division once, at most four at a time, within noticeBudget and ending
@@ -51,14 +55,14 @@ const noticeHeadroom = 2 * time.Second
 // still answers when that time is up. When the
 // lookup fails the notice is left out this time and a later fetch adds it;
 // the calendar still answers, since its games are all there.
-func (h *Handler) sessionNotices(ctx context.Context, s schedule.Schedule, linkTeamIDs []string) []calendar.Notice {
+func (h *Handler) sessionNotices(ctx context.Context, s schedule.Schedule, ids []string, member bool) []calendar.Notice {
 	page := h.soccerPage()
 	if page == "" || h.Divisions == nil {
 		return nil
 	}
 	now := h.now()
 	var after []string
-	for _, id := range linkTeamIDs {
+	for _, id := range ids {
 		i := slices.IndexFunc(s.Teams, func(t schedule.Team) bool { return t.ID == id })
 		if i < 0 || !laterInLink(s.Teams[i], s.Teams) {
 			after = append(after, id)
@@ -70,7 +74,7 @@ func (h *Handler) sessionNotices(ctx context.Context, s schedule.Schedule, linkT
 	games := map[string][]schedule.Game{}
 	var divisionIDs []string
 	for _, t := range s.Teams {
-		if laterInLink(t, s.Teams) {
+		if !slices.Contains(ids, t.ID) || laterInLink(t, s.Teams) {
 			continue
 		}
 		for _, g := range s.Games {
@@ -99,13 +103,18 @@ func (h *Handler) sessionNotices(ctx context.Context, s schedule.Schedule, linkT
 			continue
 		}
 		name := strings.TrimSpace(t.Name)
+		description := fmt.Sprintf("%s has played its last game of this Session, so this calendar won't get next Session's games. "+
+			"Get next Session's calendar from Let's Plan Soccer: %s", name, nextURL)
+		if member {
+			description = fmt.Sprintf("%s has played its last game of this Session. "+
+				"Pick next Session's Team on Let's Plan Soccer, and its games join this same calendar: %s", name, nextURL)
+		}
 		notices = append(notices, calendar.Notice{
-			TeamID:  t.ID,
-			Day:     day,
-			Summary: name + ": this Session is over",
-			Description: fmt.Sprintf("%s has played its last game of this Session, so this calendar won't get next Session's games. "+
-				"Get next Session's calendar from Let's Plan Soccer: %s", name, nextURL),
-			URL: nextURL,
+			TeamID:      t.ID,
+			Day:         day,
+			Summary:     name + ": this Session is over",
+			Description: description,
+			URL:         nextURL,
 		})
 	}
 	return notices

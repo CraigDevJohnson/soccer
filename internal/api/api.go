@@ -1,6 +1,6 @@
 // Package api is the Let's Plan Soccer HTTP interface. Only the site calls
 // it, with signed requests (ADR 0006); the site turns its answers into screens
-// and serves Session links to calendar apps.
+// and serves Session links and Member links to calendar apps.
 package api
 
 import (
@@ -24,7 +24,7 @@ import (
 	"github.com/CraigDevJohnson/soccer/internal/schedule"
 )
 
-// Handler serves the Visitor flow.
+// Handler serves the Visitor flow, and the calendar behind each Member link.
 type Handler struct {
 	Teams     league.Teams
 	Directory league.Directory
@@ -71,6 +71,7 @@ func (h *Handler) Router() http.Handler {
 	r.Post("/calendar", h.download)
 	r.Post("/links", h.createLink)
 	r.Get("/links/{token}", h.serveLink)
+	r.Post("/feeds", h.feed)
 	return r
 }
 
@@ -202,7 +203,7 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	body, err := h.render(s, sel, nil)
+	body, err := h.render(s, sel, teamsCalendarName(s), nil)
 	if err != nil {
 		h.Log.Error("render calendar", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal", "could not build the calendar")
@@ -255,7 +256,7 @@ func (h *Handler) serveLink(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	body, err := h.render(s, sel, h.sessionNotices(r.Context(), s, sel.TeamIDs))
+	body, err := h.render(s, sel, teamsCalendarName(s), h.sessionNotices(r.Context(), s, sel.TeamIDs, false))
 	if err != nil {
 		h.Log.Error("render calendar", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal", "could not build the calendar")
@@ -269,12 +270,13 @@ func (h *Handler) serveLink(w http.ResponseWriter, r *http.Request) {
 // wholeSchedule reads every Team or answers the error itself: a Schedule
 // comes back only when the league answered for all of them, so no caller
 // hands out a file or a link with one Team's games silently missing. On
-// /links/{token} alone, Team IDs the league no longer knows give an empty
-// Schedule, because the Session is over and the app should show nothing.
+// what a calendar app fetches, /links/{token} and /feeds, Team IDs the league
+// no longer knows give an empty Schedule, because the Session is over and the
+// app should show nothing.
 func (h *Handler) wholeSchedule(w http.ResponseWriter, r *http.Request, ids []string) (schedule.Schedule, bool) {
 	s, err := schedule.Combine(r.Context(), h.Teams, ids, h.now())
 	switch {
-	case errors.Is(err, schedule.ErrNoTeams) && chi.RouteContext(r.Context()).RoutePattern() == "/links/{token}":
+	case errors.Is(err, schedule.ErrNoTeams) && fetchedByCalendarApps(r):
 		return s, true
 	case err != nil:
 		h.scheduleError(w, err)
@@ -286,7 +288,24 @@ func (h *Handler) wholeSchedule(w http.ResponseWriter, r *http.Request, ids []st
 	return s, true
 }
 
-func (h *Handler) render(s schedule.Schedule, sel schedule.Selection, notices []calendar.Notice) (string, error) {
+// fetchedByCalendarApps reports whether r is on a route whose answer a
+// calendar app fetches again and again, where an empty calendar is right
+// once every Team's Session is over.
+func fetchedByCalendarApps(r *http.Request) bool {
+	switch chi.RouteContext(r.Context()).RoutePattern() {
+	case "/links/{token}", "/feeds":
+		return true
+	}
+	return false
+}
+
+func (h *Handler) render(s schedule.Schedule, sel schedule.Selection, name string, notices []calendar.Notice) (string, error) {
+	return calendar.Write(calendar.Calendar{Name: name, Events: calendarEvents(s, sel), Notices: notices}, h.now())
+}
+
+// calendarEvents are the chosen games, each with the calendar's own Team that plays
+// in it.
+func calendarEvents(s schedule.Schedule, sel schedule.Selection) []calendar.Event {
 	chosen := sel.Chosen(s.Games)
 	names := make(map[string]string, len(s.Teams))
 	for _, t := range s.Teams {
@@ -299,11 +318,16 @@ func (h *Handler) render(s schedule.Schedule, sel schedule.Selection, notices []
 			Home: g.Home, Away: g.Away, Team: ownTeam(g, names),
 		}
 	}
-	name := calendar.Name(teamNames(s))
-	if name == "" {
-		name = "Soccer"
+	return events
+}
+
+// teamsCalendarName names a download or a Session link after its Teams,
+// such as "ROVERS + KICKERS".
+func teamsCalendarName(s schedule.Schedule) string {
+	if name := calendar.Name(teamNames(s)); name != "" {
+		return name
 	}
-	return calendar.Write(calendar.Calendar{Name: name, Events: events, Notices: notices}, h.now())
+	return "Soccer"
 }
 
 // ownTeam names the calendar's Team that plays in g, so its title can put
