@@ -26,7 +26,7 @@ A bug fix starts with a test that fails without it.
 - CI must pass: its `Go` and `Infrastructure` jobs run on every pull request and never touch AWS. Codex reviews every pull request too.
 - Merge with Squash and merge. A merge to `main` that changes what is deployed deploys to dev, and production waits for Craig's approval; a docs-only merge deploys nothing ([docs/operations/deploy.md](docs/operations/deploy.md)).
 - Never commit secrets, state, plans, or tfvars outside `infra/environments/`. The `.gitignore` keeps most of them out.
-- GitHub Actions are pinned to a commit SHA with the version in a comment. Dependabot checks the Actions, the Go modules and the OpenTofu providers weekly and updates the SHA and the comment together.
+- GitHub Actions are pinned to a commit SHA with the version in a comment. Dependabot checks the Actions, the Go modules and the OpenTofu providers weekly and updates the SHA and the comment together. Minor and patch updates merge on their own once the required checks pass (`.github/workflows/dependabot-auto-merge.yml`); major updates, and minor updates of a 0.x dependency, wait for Craig's review.
 
 ## Commit messages
 
