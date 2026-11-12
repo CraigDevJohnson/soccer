@@ -25,5 +25,20 @@ Guidance for AI coding agents working in this repository.
 - Logs carry the route pattern, never the path, so Session link tokens and searches stay out. No answer or log line carries a coach id.
 - Nothing about a Visitor is stored; a Session link's token carries the whole choice.
 - Never commit secrets, state, plans, or tfvars outside `infra/environments/`.
+- A pull request that changes what the backend does, or how it is deployed, adds a line to `CHANGELOG.md` under the day's date.
 - Pin a new GitHub Action to a commit SHA with its version in a comment.
 - Merge pull requests with Squash and merge.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs are tracked in GitHub Issues for `CraigDevJohnson/soccer` using `gh`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the default labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Use a single-context layout with root `CONTEXT.md` and `docs/adr/`, created when needed; until then the README is the specification. See `docs/agents/domain.md`.

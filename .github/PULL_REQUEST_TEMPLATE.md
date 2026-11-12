@@ -11,6 +11,7 @@
 - [ ] `task ci` passes
 - [ ] Tests cover the new or changed behavior
 - [ ] The README says what the backend now does, if that changed
+- [ ] `CHANGELOG.md` has a line for it, if what the backend does or how it deploys changed
 
 ## Testing
 

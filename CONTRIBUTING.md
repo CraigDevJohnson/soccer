@@ -25,6 +25,7 @@ A bug fix starts with a test that fails without it.
 - Branch from `main` and keep each pull request to one topic.
 - CI must pass: its `Go` and `Infrastructure` jobs run on every pull request and never touch AWS. Codex reviews every pull request too.
 - Merge with Squash and merge. A merge to `main` that changes what is deployed deploys to dev, and production waits for Craig's approval; a docs-only merge deploys nothing ([docs/operations/deploy.md](docs/operations/deploy.md)).
+- A pull request that changes what the backend does, or how it is deployed, adds a line to [CHANGELOG.md](CHANGELOG.md) under the day's date. Dependency updates are left out.
 - Never commit secrets, state, plans, or tfvars outside `infra/environments/`. The `.gitignore` keeps most of them out.
 - GitHub Actions are pinned to a commit SHA with the version in a comment. Dependabot checks the Actions, the Go modules and the OpenTofu providers weekly and updates the SHA and the comment together. Minor and patch updates merge on their own once the required checks pass (`.github/workflows/dependabot-auto-merge.yml`); major updates, minor updates of a 0.x dependency, and every GitHub Actions update wait for Craig's review.
 
@@ -43,6 +44,7 @@ Match the history: one short sentence in the imperative that says what changes, 
 | `P2` | Medium: normal priority |
 | `P3` | Low: nice to have |
 | `dependencies` | Set by Dependabot on its pull requests |
+| `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix` | Where an issue stands in triage ([docs/agents/triage-labels.md](docs/agents/triage-labels.md)) |
 
 ## Security
 
