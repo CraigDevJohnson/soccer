@@ -7,5 +7,5 @@ require (
 	github.com/aws/aws-lambda-go v1.55.1
 	github.com/awslabs/aws-lambda-go-api-proxy v0.16.2
 	github.com/go-chi/chi/v5 v5.5.0
-	golang.org/x/sync v0.24.0
+	golang.org/x/sync v0.25.0
 )
