@@ -70,6 +70,8 @@ Before the Teams are read, each Remembered team's newest Team ID goes through th
 
 The calendar, named "Let's Plan Soccer", holds every game, played and remaining, of every Team ID, titled as a Session link's are. It fails as a Session link does: a 503 when the league fails for any Team, and an empty calendar when the list is empty or the league knows none of its Team IDs. When a Remembered team's Session is over and there was no Team to follow, its newest Team ID gets the end-of-Session notice, worded for a Member: next Session's Team, picked on `/soccer?after=…`, joins this same calendar. A Remembered team's older Team ID is the Session before, so it never gets the notice or goes in `after`.
 
+The site also sends `POST /feeds`, and then `POST /calendar` with `since` set to now, once a day for each Member who turned on the daily iCloud update, which adds new games to their iCloud calendar ([the-lobby#103](https://github.com/CraigDevJohnson/the-lobby/issues/103)).
+
 ## Google Calendar events
 
 A signed-in Member with access can have the site write the games they ticked straight into a Google calendar they pick, when they press Add. The site does all the Google work and holds the Member's Google access; this backend never sees a Google token. It sends `POST /events` the same body as `POST /calendar` and gets back the same games as Google Calendar event bodies, `{"events": [...]}`, which it inserts, or updates when the event is already there:
