@@ -4,6 +4,8 @@ The Let's Plan Soccer page (`/soccer` in [the-lobby](https://github.com/CraigDev
 
 GitHub Actions deploys both. A computer is used only to test a change, and once, to make the roles GitHub signs in with.
 
+Wherever this page says a computer, a cloud thread counts as one: a Claude Code session in a cloud container, not on Craig's computer. It has the same tools and AWS profiles, so the same `task`, `tofu` and `aws` commands apply. Its sign-in differs (step 1 of the [One-time setup](#one-time-setup)), and every approval this page asks for is still needed. Cloud threads have so far run read-only AWS calls, `tofu init` and `plan` with an administrator profile, and one approved apply; none has yet applied an IAM change, which is what `infra/bootstrap` and a first apply make. Approving production and the GitHub environment settings stay Craig's, on his phone or in any browser.
+
 ## How a change gets deployed
 
 **On a pull request,** the `CI` workflow runs `task ci`: gofmt, vet, the Go tests, the Lambda build, and the OpenTofu checks for both roots against a mocked provider. It has no secrets and no cloud role, so it cannot touch AWS. Nothing is planned on a pull request.
@@ -80,7 +82,7 @@ Done once, before the first cloud deploy, on a computer with OpenTofu 1.13 or ne
    aws sts get-caller-identity --query Account --output text
    ```
 
-   `aws sso login` opens the browser for the Identity Center approval and prints `Successfully logged into Start URL: …`. The last line prints `793680745829`.
+   `aws sso login` opens the browser for the Identity Center approval and prints `Successfully logged into Start URL: …`. A cloud thread runs `aws sso login --sso-session identity-center --use-device-code` instead and posts the link and the code it prints in the thread for Craig to approve on his phone. The code lasts 10 minutes, and each thread needs its own sign-in (aws-setup `aws-design.md`, section 5.2). The last line prints `793680745829`.
 
 2. **Check the repository's OIDC subject.**
 

@@ -4,6 +4,10 @@ What changed in the Let's Plan Soccer backend, newest first. There are no
 releases: a merge to `main` deploys, so changes are listed under the day they
 merged. Dependency updates are left out.
 
+## 2026-11-17
+
+- Let the steps that run from a computer run in a cloud thread instead, with a device-code sign-in Craig approves on his phone.
+
 ## 2026-11-12
 
 - Add this changelog, the agent docs in `docs/agents/` and the triage labels.
