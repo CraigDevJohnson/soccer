@@ -103,6 +103,54 @@ func TestDescription(t *testing.T) {
 	}
 }
 
+// The Lobby's daily iCloud update tells that the league moved a game by two
+// things this file gives it: the digits of its DTSTART, Boise wall-clock time
+// beside a TZID, and the first line of its description, the field (the-lobby
+// ADR 0017). The site keeps both as written and compares them the next day,
+// and only for a UID that starts "game-". A change to the form of either
+// would read as every game moving: each one replaced in the Member's iCloud
+// calendar, and all of them listed in an email.
+func TestWriteKeepsTheStartAndFieldTheSiteCompares(t *testing.T) {
+	tests := []struct {
+		name      string
+		start     time.Time
+		field     string
+		wantStart string
+		wantField string
+	}{
+		{"standard time, a field the league numbers", time.Date(2026, 11, 22, 2, 15, 0, 0, time.UTC), "3", "20261121T191500", "Field 3"},
+		{"daylight time, a field the league names", time.Date(2027, 7, 10, 1, 15, 0, 0, time.UTC), "North Court", "20270709T191500", "North Court"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := Write(Calendar{Name: "ROVERS", Events: []Event{
+				{GameID: "123456", Start: tt.start, End: tt.start.Add(45 * time.Minute), Field: tt.field, Home: "KICKERS", Away: "ROVERS", Team: "ROVERS"},
+			}}, tt.start)
+			if err != nil {
+				t.Fatal(err)
+			}
+			unfolded := strings.ReplaceAll(out, "\r\n ", "")
+			// The event's own lines, as the site reads them: the time zone
+			// before it has a DTSTART too, and the reminder inside it a
+			// DESCRIPTION.
+			from, to := strings.Index(unfolded, "BEGIN:VEVENT"), strings.Index(unfolded, "BEGIN:VALARM")
+			if from < 0 || to < from {
+				t.Fatalf("no event with a reminder in:\n%s", out)
+			}
+			event := unfolded[from:to]
+			for _, want := range []string{
+				"\r\nUID:game-123456@",
+				"\r\nDTSTART;TZID=America/Denver:" + tt.wantStart + "\r\n",
+				"\r\nDESCRIPTION:" + tt.wantField + `\n`,
+			} {
+				if !strings.Contains(event, want) {
+					t.Errorf("missing %q in:\n%s", want, event)
+				}
+			}
+		})
+	}
+}
+
 func TestWriteNotice(t *testing.T) {
 	denver, _ := time.LoadLocation(TimezoneName)
 	start := time.Date(2026, 11, 8, 19, 15, 0, 0, denver)
