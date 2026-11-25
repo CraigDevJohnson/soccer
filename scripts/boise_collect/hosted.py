@@ -26,6 +26,9 @@ REQUEST_TIMEOUT = 30
 REQUEST_RESERVE = REQUEST_TIMEOUT + 15 + 5
 PUBLISH_RESERVE = 180
 TERMINAL = {"completed", "completed_with_gaps"}
+JOB_ID = re.compile(r"(?:refresh|daily)-\d{4}-\d{2}-\d{2}")
+DAILY_DAYS = 14
+DAILY_BUDGET = 100
 
 
 def scope(event):
@@ -34,16 +37,17 @@ def scope(event):
     operation = event.get("operation")
     if operation in ("status", "resume") and set(event) == {"operation"}:
         return operation, {}
+    if "job" in event and (not isinstance(event["job"], str) or not JOB_ID.fullmatch(event["job"])):
+        raise ValueError("invalid archive job ID")
+    if operation == "retire" and set(event) == {"operation", "job"}:
+        return operation, event
     if operation == "resume" and set(event) == {"operation", "job", "retry_blocked_attempt"}:
-        if (not isinstance(event["job"], str) or not re.fullmatch(r"refresh-\d{4}-\d{2}-\d{2}", event["job"])
-                or type(event["retry_blocked_attempt"]) is not int or event["retry_blocked_attempt"] < 1):
+        if type(event["retry_blocked_attempt"]) is not int or event["retry_blocked_attempt"] < 1:
             raise ValueError("invalid blocked attempt reference")
         return operation, event
     if operation == "resume" and set(event) == {"operation", "job", "request_id", "additional_budget"}:
         if not isinstance(event["request_id"], str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", event["request_id"]):
             raise ValueError("invalid budget extension ID")
-        if not isinstance(event["job"], str) or not re.fullmatch(r"refresh-\d{4}-\d{2}-\d{2}", event["job"]):
-            raise ValueError("invalid budget extension job")
         if type(event["additional_budget"]) is not int or not 1 <= event["additional_budget"] <= 100:
             raise ValueError("invalid budget extension amount")
         return operation, event
@@ -51,7 +55,7 @@ def scope(event):
         stamp = datetime.fromisoformat(event["scheduled_time"].replace("Z", "+00:00"))
         if stamp.tzinfo is None:
             raise ValueError("scheduled time must include its UTC offset")
-        return operation, {"through": stamp.astimezone(BOISE).date().isoformat(), "days": 14, "budget": 100}
+        return operation, daily_request(stamp.astimezone(BOISE).date().isoformat())
     if operation == "refresh" and set(event) == {"operation", "through", "days", "budget"}:
         end = date.fromisoformat(event["through"])
         if end.isoformat() != event["through"] or end.year < 2010:
@@ -64,10 +68,19 @@ def scope(event):
     raise ValueError("invalid archive operation or fields")
 
 
+def daily_request(through):
+    return {"through": through, "days": DAILY_DAYS, "budget": DAILY_BUDGET}
+
+
 def public_status(state):
-    return {key: state[key] for key in
-            ("status", "job", "through", "days", "budget", "spent", "next_request_at", "gaps", "generation")
-            if key in state}
+    receipt = {key: state[key] for key in
+               ("status", "job", "through", "days", "budget", "spent", "next_request_at", "gaps", "generation")
+               if key in state}
+    if state.get("queued_daily"):
+        receipt["queued_daily"] = state["queued_daily"]
+    if state.get("retire_requested"):
+        receipt["retired" if state["status"] in TERMINAL else "retiring"] = True
+    return receipt
 
 
 class Checkpoint:
@@ -187,6 +200,9 @@ def sqlite_job(state):
 def replay(store, checkpoint):
     job = checkpoint.value
     end = date.fromisoformat(job["through"])
+    # A frozen local scan can contain an attempt interrupted before handoff.
+    # Use the durable admission time in every reconstruction of that baseline.
+    store.recover_interrupted(job["created"])
     store.begin_refresh(sqlite_job(job), end - timedelta(days=job["days"] - 1), end, True, job["created"])
     for number in range(1, job["spent"] + 1):
         event, _ = checkpoint.objects.read(checkpoint.journal_key(number))
@@ -208,7 +224,7 @@ def replay(store, checkpoint):
         store.set_next_request_at(event["next_request_at"])
 
 
-def close_gaps(store, job, now):
+def close_gaps(store, job, now, *, retire=False):
     # A hosted run reports source-invalid and missing records as gaps. Keep
     # their failed attempts and the prior successful snapshots intact. An
     # authentication block pauses collection across jobs for operator review.
@@ -218,6 +234,9 @@ def close_gaps(store, job, now):
             WHERE job_id=? AND status='pending' AND EXISTS (
               SELECT 1 FROM resources r WHERE (r.kind,r.key)=(j.kind,j.key)
               AND r.status IN ('invalid','missing'))""", (job,))
+        if retire:
+            store.conn.execute("""UPDATE refresh_job_resources SET status='skipped',skip_reason='operator_retired'
+                WHERE job_id=? AND status='pending'""", (job,))
     return store.finish_refresh(job, now)
 
 
@@ -241,70 +260,138 @@ def publish_job(checkpoint, generations, pointer, etag, remaining):
     dataset = generations.restore(state["base"])
     with closing(Store(dataset, read_origin(dataset))) as store:
         replay(store, checkpoint)
-        summary = close_gaps(store, sqlite_job(state), state["completed_at"])
-        if summary["pending"] or summary["skipped"] != state["gaps"]:
+        retiring = state.get("retire_requested", False)
+        summary = close_gaps(store, sqlite_job(state), state["completed_at"], retire=retiring)
+        if summary["pending"] or (not retiring and summary["skipped"] != state["gaps"]):
             raise ValueError("replayed job summary differs from its durable checkpoint")
     generation = generations.publish(dataset, state["completed_at"])
-    checkpoint.save(status="publishing", generation=generation)
+    checkpoint.save(status="publishing", generation=generation, gaps=summary["skipped"])
     return finish_publication(checkpoint, pointer, etag)
+
+
+def same_scope(state, request):
+    return (state.get("through"), state.get("days"), state.get("initial_budget")) == (
+        request["through"], request["days"], request["budget"])
+
+
+def latest_through(state):
+    # Older checkpoints only admitted dates in order.
+    return state.get("latest_through", state.get("through", ""))
+
+
+def admit(checkpoint, generations, origin, pointer, etag, request, *, daily, now):
+    through = request["through"]
+    job = ("daily-" if daily else "refresh-") + through
+    # An equivalent manual and scheduled job share a SQLite identity so even
+    # delayed duplicate occurrences can be recognised in a published archive.
+    internal_job = "aws-daily-" + through if request == daily_request(through) else "aws-" + job
+    queue = [d for d in checkpoint.value.get("queued_daily", []) if not (daily and d == through)]
+    dataset = generations.restore(pointer["generation"])
+    if read_origin(dataset) != origin:
+        raise ValueError("archive source and worker origin differ")
+    with closing(Store(dataset, origin)) as source:
+        if source.active_refresh_job_id():
+            raise ValueError("resolve the unfinished source refresh before importing it for collection")
+        previous = source.conn.execute("SELECT status,start_day,end_day,include_catalog FROM refresh_jobs WHERE id=?",
+                                       (internal_job,)).fetchone()
+        end = date.fromisoformat(through)
+        start = end - timedelta(days=request["days"] - 1)
+        if previous:
+            if (daily and previous["status"] in ("complete", "complete_with_gaps")
+                    and (previous["start_day"], previous["end_day"], previous["include_catalog"])
+                    == (start.isoformat(), through, 1)):
+                checkpoint.save(queued_daily=queue)
+                receipt = {"job": job, "through": through, "days": request["days"],
+                           "status": "completed_with_gaps" if previous["status"] == "complete_with_gaps" else "completed"}
+                return None, receipt
+            raise ValueError("imported generation already contains this hosted job")
+        source.recover_interrupted(now)
+        source.begin_refresh(internal_job, start, end, True, now)
+        next_request_at = max(source.next_request_at(), checkpoint.value.get("next_request_at", 0))
+    checkpoint.save(status="running", job=job, sqlite_job=internal_job, **request, initial_budget=request["budget"],
+                    base=pointer["generation"], base_etag=etag, spent=0, pending=None, extensions={}, released_blocks=[],
+                    next_request_at=next_request_at, created=now, gaps=0, generation=None, completed_at=None,
+                    retire_requested=False, queued_daily=queue,
+                    latest_through=max(through, latest_through(checkpoint.value)))
+    return dataset, None
 
 
 def run(event, objects, generations, client, remaining, clock=time.time, sleep=time.sleep):
     operation, request = scope(event)
     if operation == "status":
         return public_status(objects.status(WORKER))
-    if not enabled(objects.mode(), operation):
+    if operation != "retire" and not enabled(objects.mode(), operation):
         return {"status": "collection_disabled"}
     if (operation in ("refresh", "scheduled")
             and date.fromisoformat(request["through"]) > datetime.fromtimestamp(clock(), BOISE).date()):
         raise ValueError("refresh through date is in the future")
     checkpoint = Checkpoint(objects)
     state = checkpoint.value
-    pointer, etag = objects.read(ACTIVE)
-    if not isinstance(pointer.get("generation"), str) or not re.fullmatch(r"[0-9a-f]{64}", pointer["generation"]):
-        raise ValueError("invalid active archive generation")
+    if "job" in request and request["job"] != state.get("job"):
+        raise ValueError("operation must identify the current job")
+
+    if operation == "scheduled" and not same_scope(state, request):
+        queued = state.get("queued_daily", [])
+        if request["through"] not in queued:
+            checkpoint.save(queued_daily=sorted([*queued, request["through"]]))
+    if operation == "refresh" and not same_scope(state, request):
+        if request["through"] == state.get("through"):
+            raise ValueError("date already has a job with different parameters")
+        if request["through"] <= latest_through(state):
+            raise ValueError("requested refresh date belongs to an older job window")
+        if state["status"] not in TERMINAL | {"idle"} or state.get("queued_daily"):
+            raise ValueError("previous work is unfinished; resume it first")
+
+    # A single invocation can finish a previous job and start the next due
+    # occurrence. Any remaining dates stay in S3 until the next run or resume.
+    for _ in range(2):
+        state = checkpoint.value
+        pointer, etag = objects.read(ACTIVE)
+        if not isinstance(pointer.get("generation"), str) or not re.fullmatch(r"[0-9a-f]{64}", pointer["generation"]):
+            raise ValueError("invalid active archive generation")
+        dataset = None
+        if state["status"] in TERMINAL | {"idle"}:
+            daily = False
+            if operation == "refresh" and not same_scope(state, request):
+                admission = request
+            elif (operation == "scheduled" or (operation == "resume" and not request)) and state.get("queued_daily"):
+                admission = daily_request(state["queued_daily"][0])
+                daily = True
+            else:
+                return checkpoint.status()
+            if remaining() < PUBLISH_RESERVE + REQUEST_RESERVE:
+                if daily:
+                    return checkpoint.status()
+                return {"status": "deferred", "spent": 0}
+            dataset, recorded = admit(checkpoint, generations, client.base_url, pointer, etag, admission,
+                                      daily=daily, now=clock())
+            if recorded is not None:
+                if not checkpoint.value["queued_daily"]:
+                    return recorded
+                continue
+        result = advance_job(checkpoint, generations, client, remaining, clock, sleep, operation, request,
+                             pointer, etag, dataset)
+        if result["status"] not in TERMINAL or not checkpoint.value.get("queued_daily"):
+            return result
+        if operation != "scheduled" and (operation != "resume" or request):
+            return result
+    return checkpoint.status()
+
+
+def advance_job(checkpoint, generations, client, remaining, clock, sleep, operation, request, pointer, etag, dataset):
+    state = checkpoint.value
     if state["status"] == "publishing":
         return finish_publication(checkpoint, pointer, etag)
-    if operation == "resume" and state["status"] in TERMINAL | {"idle"}:
-        return checkpoint.status()
-    dataset = None
-    if operation in ("refresh", "scheduled"):
-        through = request["through"]
-        if state.get("through", "") > through:
-            return checkpoint.status()
-        if through == state.get("through"):
-            if operation == "refresh" and (request["days"], request["budget"]) != (state["days"], state["initial_budget"]):
-                raise ValueError("date already has a job with different parameters")
-            if state["status"] in TERMINAL:
-                return checkpoint.status()
-        elif state["status"] in TERMINAL | {"idle"}:
-            if remaining() < PUBLISH_RESERVE + REQUEST_RESERVE:
-                return {"status": "deferred", "spent": 0}
-            dataset = generations.restore(pointer["generation"])
-            job = f"refresh-{through}"
-            internal_job = "aws-" + job
-            origin = read_origin(dataset)
-            if origin != client.base_url:
-                raise ValueError("archive source and worker origin differ")
-            with closing(Store(dataset, origin)) as source:
-                if source.active_refresh_job_id():
-                    raise ValueError("resolve the unfinished source refresh before importing it for collection")
-                if source.conn.execute("SELECT 1 FROM refresh_jobs WHERE id=?", (internal_job,)).fetchone():
-                    raise ValueError("imported generation already contains this hosted job")
-                # Exercise work selection against the restored database before
-                # admitting a job whose source cannot support it.
-                end = date.fromisoformat(through)
-                source.begin_refresh(internal_job, end - timedelta(days=request["days"] - 1), end, True, clock())
-            checkpoint.save(status="running", job=job, sqlite_job=internal_job, **request, initial_budget=request["budget"],
-                            base=pointer["generation"], base_etag=etag, spent=0, pending=None, extensions={}, released_blocks=[],
-                            next_request_at=state.get("next_request_at", 0), created=clock(), gaps=0,
-                            generation=None, completed_at=None)
-        elif operation == "refresh":
-            raise ValueError("a previous refresh is unfinished; resume that job")
-    state = checkpoint.value
     if pointer["generation"] != state["base"] or etag != state["base_etag"]:
         raise Conflict("active archive changed; reconcile the pending job before continuing")
     if state["status"] == "finalizing":
+        return publish_job(checkpoint, generations, pointer, etag, remaining)
+    if operation == "retire" and not state.get("retire_requested"):
+        checkpoint.save(retire_requested=True)
+    if checkpoint.value.get("retire_requested"):
+        if not checkpoint.recover(clock()):
+            return checkpoint.status()
+        checkpoint.save(status="finalizing", completed_at=clock())
         return publish_job(checkpoint, generations, pointer, etag, remaining)
     if request.get("additional_budget"):
         if request["job"] != state["job"]:

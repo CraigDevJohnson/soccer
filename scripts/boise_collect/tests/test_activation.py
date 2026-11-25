@@ -131,6 +131,7 @@ class ActivationTests(unittest.TestCase):
         completed = {"version": 1, "status": "completed", "next_request_at": 10}
         for mode, worker in (
             ({"mode": "manual"}, None), ({"mode": "daily"}, None), ({}, None),
+            ({"mode": "off"}, completed | {"queued_daily": ["2026-11-26"]}),
             (None, completed | {"pending": {"number": 1}}), (None, completed | {"status": "waiting"}),
             (None, completed | {"next_request_at": 11}), (None, completed | {"next_request_at": None}),
             (None, completed | {"next_request_at": float("nan")}), (None, completed | {"version": 2}),

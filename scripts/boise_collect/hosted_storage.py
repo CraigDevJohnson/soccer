@@ -136,6 +136,12 @@ class Generations:
         source = self.workdir / "source" / generation
         manifest = source / "manifest.json"
         if not source.exists():
+            # Draining the next occurrence can switch generations within one
+            # invocation. Only the current job needs a local working copy.
+            for name in ("data", "source", "output"):
+                old = self.workdir / name
+                if old.exists():
+                    shutil.rmtree(old)
             source.mkdir(parents=True)
             self.objects.download(f"generations/{generation}/manifest.json", manifest, MAX_MANIFEST_BYTES)
             doc = load_manifest(manifest)

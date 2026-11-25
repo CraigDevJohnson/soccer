@@ -167,6 +167,167 @@ class HostedTests(unittest.TestCase):
             stamps = [tuple(r) for r in store.conn.execute("SELECT id,start_day FROM refresh_jobs ORDER BY id")]
             self.assertEqual(stamps, [("aws-refresh-" + DAY, DAY), ("refresh-" + DAY, "2010-09-13")])
 
+    def daily_responses(self):
+        self.responses.extend([Response(200, b"[]")] + [Response(200, b'{"data":{}}')] * 14)
+
+    @staticmethod
+    def scheduled(day):
+        return {"operation": "scheduled", "scheduled_time": f"{day}T12:00:00Z"}
+
+    def test_frozen_interrupted_scan_is_recovered_in_published_generation(self):
+        with closing(Store(self.source, ORIGIN)) as source:
+            source.queue_catalog()
+            source.start_attempt("catalog", "upcoming", 1)
+        write_report(self.source, self.source / "reports", now=2)
+        self.seed()
+        self.empty_responses()
+        self.assertEqual(self.invoke()["status"], "completed")
+        with closing(self.replayed_database()) as archived:
+            self.assertEqual([r[0] for r in archived.conn.execute("SELECT outcome FROM attempts ORDER BY id")],
+                             ["interrupted", "success", "success"])
+        self.assertEqual(len(self.events), 2)
+
+    def test_scheduled_occurrence_survives_older_job_and_backoff(self):
+        self.objects.setting = "daily"
+        self.responses.append(Response(429, b"", "300"))
+        self.assertEqual(self.invoke({**self.admit, "budget": 3})["status"], "waiting")
+        later = self.scheduled("2010-09-27")
+        for _ in range(2):
+            waiting = self.invoke(later)
+            self.assertEqual(waiting["queued_daily"], ["2010-09-27"])
+            self.assertEqual(waiting["spent"], 1)
+        self.advance(300)
+        self.empty_responses()
+        self.daily_responses()
+        done = self.invoke({"operation": "resume"})
+        self.assertEqual((done["job"], done["days"], done["budget"], done["spent"], done["status"]),
+                         ("daily-2010-09-27", 14, 100, 15, "completed"))
+        self.assertNotIn("queued_daily", done)
+        self.assertEqual(self.events[-1], ("day", "2010-09-27"))
+        self.assertEqual(self.invoke(later), done)
+        with closing(self.replayed_database()) as archived:
+            self.assertEqual(archived.conn.execute("SELECT count(*) FROM attempts").fetchone()[0], 18)
+
+    def test_completed_narrow_manual_scope_does_not_suppress_daily(self):
+        self.empty_responses()
+        self.assertEqual(self.invoke()["status"], "completed")
+        self.objects.setting = "daily"
+        self.daily_responses()
+        done = self.invoke(self.scheduled(DAY))
+        self.assertEqual((done["job"], done["days"], done["spent"]), ("daily-" + DAY, 14, 15))
+        self.assertEqual(len(self.events), 17)
+        self.assertEqual(self.invoke(self.scheduled(DAY)), done)
+
+    def test_same_window_different_budget_is_a_distinct_occurrence(self):
+        self.objects.setting = "daily"
+        self.daily_responses()
+        self.assertEqual(self.invoke({**self.admit, "days": 14, "budget": 15})["status"], "completed")
+        self.daily_responses()
+        done = self.invoke(self.scheduled(DAY))
+        self.assertEqual((done["job"], done["budget"], done["spent"]), ("daily-" + DAY, 100, 15))
+        self.assertEqual(len(self.events), 30)
+
+    def test_equivalent_manual_scope_coalesces_with_daily(self):
+        self.objects.setting = "daily"
+        self.daily_responses()
+        done = self.invoke({**self.admit, "days": 14, "budget": 100})
+        self.assertEqual(self.invoke(self.scheduled(DAY)), done)
+        self.assertEqual(len(self.events), 15)
+
+    def test_delayed_scheduled_duplicate_acknowledges_its_own_date(self):
+        self.objects.setting = "daily"
+        self.daily_responses()
+        self.invoke(self.scheduled(DAY))
+        self.daily_responses()
+        self.invoke(self.scheduled("2010-09-27"))
+        before = len(self.events)
+        receipt = self.invoke(self.scheduled(DAY))
+        self.assertEqual((receipt["job"], receipt["through"], receipt["status"]),
+                         ("daily-" + DAY, DAY, "completed"))
+        self.assertEqual(len(self.events), before)
+        self.assertEqual(self.invoke({"operation":"status"})["job"], "daily-2010-09-27")
+
+    def test_out_of_order_daily_never_reopens_an_older_manual_journal(self):
+        self.objects.setting = "daily"
+        self.daily_responses()
+        self.invoke({**self.admit, "days": 14, "budget": 100})
+        self.empty_responses()
+        self.invoke({**self.admit, "through": "2010-09-27"})
+        self.daily_responses()
+        self.assertEqual(self.invoke(self.scheduled("2010-09-25"))["status"], "completed")
+        with self.assertRaisesRegex(ValueError, "older"):
+            self.invoke(self.admit)
+        self.assertEqual(len(self.events), 32)
+
+    def test_schedule_is_preserved_across_lost_enqueue_ack_and_no_work_time(self):
+        self.objects.setting = "daily"
+        self.objects.after_write = lambda key, state: key == WORKER and bool(state.get("queued_daily"))
+        with self.assertRaisesRegex(RuntimeError, "lost response"):
+            self.invoke(self.scheduled(DAY))
+        pending = self.invoke(self.scheduled(DAY), remaining=lambda: 1)
+        self.assertEqual(pending["queued_daily"], [DAY])
+        self.assertFalse(self.events)
+        self.daily_responses()
+        self.assertEqual(self.invoke({"operation":"resume"})["spent"], 15)
+        self.assertEqual(len(self.events), 15)
+
+    def test_retirement_survives_lost_bundle_ack_and_closed_gate(self):
+        self.empty_responses()
+        self.invoke({**self.admit, "budget": 1})
+        self.objects.setting = "off"
+        self.objects.lose_bundle_ack = True
+        retire = {"operation":"retire", "job":"refresh-" + DAY}
+        with self.assertRaisesRegex(RuntimeError, "lost bundle receipt"):
+            self.invoke(retire)
+        uploads = set(self.objects.files)
+        self.advance(600)
+        closed = self.invoke(retire)
+        self.assertEqual((closed["status"], closed["gaps"], closed["spent"]),
+                         ("completed_with_gaps", 1, 1))
+        self.assertEqual({key for key in self.objects.files if key.endswith("tar.gz")},
+                         {key for key in uploads if key.endswith("tar.gz")})
+        self.assertEqual(self.events, [("catalog", "upcoming")])
+
+    def test_prior_manual_date_is_rejected_explicitly(self):
+        self.empty_responses()
+        self.invoke()
+        with self.assertRaisesRegex(ValueError, "older"):
+            self.invoke({**self.admit, "through": "2010-09-24"})
+        self.assertEqual(len(self.events), 2)
+
+    def test_retire_keeps_accepted_work_and_budget_and_releases_another_job(self):
+        self.objects.setting = "daily"
+        self.responses.extend([Response(200, b"[]"), Response(503, b"", "300")])
+        first = self.invoke()
+        self.assertEqual(first["status"], "paused_budget")
+        later = self.scheduled("2010-09-27")
+        self.invoke(later)
+        target = {"operation": "retire", "job": first["job"]}
+        with self.assertRaisesRegex(ValueError, "current"):
+            self.invoke({**target, "job": "refresh-2010-09-27"})
+        closed = self.invoke(target)
+        self.assertEqual((closed["status"], closed["spent"], closed["gaps"], closed["retired"]),
+                         ("completed_with_gaps", 2, 1, True))
+        self.assertEqual(closed["queued_daily"], ["2010-09-27"])
+        self.assertEqual(closed["next_request_at"], first["next_request_at"])
+        self.assertEqual(self.invoke(target), closed)
+        self.assertEqual(len(self.events), 2)
+        with closing(self.replayed_database()) as archived:
+            self.assertEqual([r[0] for r in archived.conn.execute("SELECT outcome FROM attempts ORDER BY id")],
+                             ["success", "failed"])
+            self.assertEqual(archived.conn.execute("SELECT count(*) FROM snapshots").fetchone()[0], 1)
+            self.assertEqual(archived.conn.execute(
+                "SELECT skip_reason FROM refresh_job_resources WHERE kind='day'").fetchone()[0], "operator_retired")
+        self.assertEqual(self.invoke({"operation": "resume"})["job"], "daily-2010-09-27")
+        self.assertEqual(len(self.events), 2)
+        self.advance(300)
+        self.daily_responses()
+        finished = self.invoke({"operation": "resume"})
+        self.assertEqual(finished["status"], "completed_with_gaps")
+        self.assertFalse(finished.get("retired"))
+        with self.assertRaisesRegex(ValueError, "current"):
+            self.invoke(target)
+
     def test_unfinished_imported_job_prevents_admission(self):
         with closing(Store(self.source, ORIGIN)) as store:
             store.begin_refresh("local-in-progress", date.fromisoformat(DAY), date.fromisoformat(DAY), True, 1)

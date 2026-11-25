@@ -80,7 +80,7 @@ def require_idle_peer(read, now):
         return
     if (type(worker.get("version")) is not int or worker["version"] != 1
             or worker.get("status") not in ("idle", "completed", "completed_with_gaps")
-            or worker.get("pending") is not None):
+            or worker.get("pending") is not None or worker.get("queued_daily", []) != []):
         raise ValueError("the other archive worker has unfinished work or an unknown state")
     # The seed idle checkpoint predates its first request. A finished job must record pacing.
     until = worker.get("next_request_at", 0 if worker["status"] == "idle" else None)
