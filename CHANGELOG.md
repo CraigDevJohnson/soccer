@@ -6,7 +6,7 @@ merged. Dependency updates are left out.
 
 ## 2026-11-25
 
-- Integrate the Boise archive collector and its local explorer.
+- Add the Boise collector, verified archive import and private AWS refresh worker. Collection and the daily schedule start disabled.
 
 ## 2026-11-17
 

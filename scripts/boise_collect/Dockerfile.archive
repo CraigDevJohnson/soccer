@@ -1,0 +1,16 @@
+FROM node:24-bookworm-slim@sha256:873f586f3794f52281bd039bf02c048a0be08fde619338f9941bad1eb6b34530 AS bruno
+WORKDIR /build
+COPY scripts/boise_collect/bruno/package*.json ./
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+
+FROM public.ecr.aws/lambda/python:3.13@sha256:5e8b82c63368950da6e471a9e2bda8c88b4a949059190cfafdd0036160f4b978
+ARG ARCHIVE_SOURCE_REVISION
+RUN test "${#ARCHIVE_SOURCE_REVISION}" -eq 40 && test -z "$(printf '%s' "$ARCHIVE_SOURCE_REVISION" | tr -d '0-9a-f')"
+ENV ARCHIVE_SOURCE_REVISION=$ARCHIVE_SOURCE_REVISION
+ENV PYTHONDONTWRITEBYTECODE=1
+COPY --from=bruno /usr/local/bin/node /usr/local/bin/node
+COPY --from=bruno /build/node_modules ./scripts/boise_collect/bruno/node_modules
+COPY scripts/boise_collect/bruno/*.bru scripts/boise_collect/bruno/bruno.json ./scripts/boise_collect/bruno/
+COPY scripts/boise_collect/*.py ./scripts/boise_collect/
+RUN node --version && python -c 'from scripts.boise_collect.bruno_client import BrunoClient; from scripts.boise_collect.collector import ORIGIN; BrunoClient(ORIGIN); from scripts.boise_collect.hosted import lambda_handler'
+CMD ["scripts.boise_collect.hosted.lambda_handler"]

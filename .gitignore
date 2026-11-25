@@ -36,3 +36,13 @@ backend.*.hcl
 # Local Python collector bytecode (datasets/reports belong under dist/)
 __pycache__/
 *.py[cod]
+
+# Archive payloads, evidence and generated coverage belong outside source control.
+collector.sqlite3
+collector.sqlite3-*
+collector.lock
+archive.tar.gz
+evidence.sha256
+**/evidence/*.json
+**/reports/coverage.json
+**/reports/coverage.md

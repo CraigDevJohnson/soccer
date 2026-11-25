@@ -87,11 +87,15 @@ One JSON line per request with the route pattern (never the path, so link tokens
 
 ## Boise historical archive
 
-The [collector](docs/operations/boise-collector.md) records public Boise sporting data in SQLite with sanitized evidence and coverage reports. The [local explorer](docs/operations/boise-explorer.md) browses that archive on loopback. Run `task collector:setup` to install the pinned Bruno transport before the offline collector tests. The collector needs Python 3.11+ and Node 24+.
+The archive preserves public Boise game schedules, registrations, official standings and the league's published player-ID leader entries. A failed date or missing score stays unknown. Historical registrations with the same name retain their own IDs. The archive runs independently of the calendar backend.
+
+The [collector](docs/operations/boise-collector.md) keeps SQLite, sanitized source evidence and coverage reports. The [local explorer](docs/operations/boise-explorer.md) browses the dataset on loopback. Node 24+, Python 3.11+ and `task collector:setup` install the locked Bruno transport for collection and offline tests.
+
+The [migration runbook](docs/operations/archive-migration.md) covers portable generations and the separate private AWS worker. Each import verifies a complete restore. A protected GitHub Actions workflow can admit a bounded refresh, inspect its status and resume its remaining work. The scheduler starts disabled and the worker checks collection permission before contacting the league. The Lobby archive workspace remains a later delivery.
 
 ## Running it
 
-Needs Go (see `go.mod`) and [Task](https://taskfile.dev).
+The calendar server needs Go (see `go.mod`) and [Task](https://taskfile.dev). Run `task collector:setup` before the combined `task ci`.
 
 ```sh
 task run          # http://127.0.0.1:8081 (SOCCER_ADDR to change)

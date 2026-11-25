@@ -1,0 +1,106 @@
+name: Soccer archive
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Archive environment
+        type: choice
+        options: [dev, prod]
+        required: true
+      operation:
+        description: Archive operation
+        type: choice
+        options: [image, import, release, run, verify, verify-recovery]
+        required: true
+      digest:
+        description: Generation ID for import, sha256 image digest for release, empty for other operations
+        type: string
+        required: false
+      job:
+        description: Worker operation as JSON for run. Defaults to status.
+        type: string
+        default: '{"operation":"status"}'
+        required: false
+
+permissions: {}
+
+jobs:
+  archive:
+    if: github.ref == 'refs/heads/main' && (inputs.operation != 'verify-recovery' || inputs.target == 'prod')
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 35
+    environment: archive-${{ inputs.operation == 'verify-recovery' && 'recovery' || inputs.operation == 'verify' && 'import' || inputs.operation }}-${{ inputs.target }}
+    concurrency: archive-delivery-${{ inputs.target }}
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      TARGET: ${{ inputs.target }}
+      OPERATION: ${{ inputs.operation }}
+      DIGEST: ${{ inputs.digest }}
+      JOB: ${{ inputs.job }}
+      AWS_REGION: us-west-2
+      AWS_PAGER: ''
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check approved revision and inputs
+        run: |
+          git fetch --no-tags --depth=1 origin main
+          test "$(git rev-parse FETCH_HEAD)" = "$GITHUB_SHA"
+          case "$TARGET" in dev|prod) ;; *) exit 1 ;; esac
+          case "$OPERATION" in
+            image|run|verify) test -z "$DIGEST" ;;
+            verify-recovery) [[ "$TARGET" == prod && -z "$DIGEST" ]] ;;
+            import) [[ "$DIGEST" =~ ^[a-f0-9]{64}$ ]] ;;
+            release) [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]] ;;
+            *) exit 1 ;;
+          esac
+          account=$(sed -nE 's/^account_id[[:space:]]*=[[:space:]]*"([0-9]{12})".*/\1/p' "infra/environments/$TARGET.tfvars")
+          [[ "$account" =~ ^[0-9]{12}$ ]]
+          echo "ARCHIVE_ACCOUNT=$account" >> "$GITHUB_ENV"
+          if [[ "$OPERATION" == verify ]]; then
+            bucket="arn:aws:s3:::soccer-archive-$TARGET-$account"
+            policy=$(jq -cn --arg bucket "$bucket" '{Version:"2012-10-17",Statement:[{Effect:"Allow",Action:"s3:GetObject",Resource:[($bucket+"/control/active.json"),($bucket+"/generations/*")]}]}')
+            echo "ARCHIVE_SESSION_POLICY=$policy" >> "$GITHUB_ENV"
+          fi
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          aws-region: us-west-2
+          role-to-assume: arn:aws:iam::${{ env.ARCHIVE_ACCOUNT }}:role/soccer-archive-${{ inputs.target }}-${{ inputs.operation == 'verify-recovery' && 'recovery' || inputs.operation == 'verify' && 'import' || inputs.operation }}
+          allowed-account-ids: ${{ env.ARCHIVE_ACCOUNT }}
+          inline-session-policy: ${{ env.ARCHIVE_SESSION_POLICY }}
+      - name: Import verified baseline
+        if: inputs.operation == 'import'
+        run: python3 -m scripts.boise_collect.transfer promote --environment "$TARGET" --account "$ARCHIVE_ACCOUNT" --generation "$DIGEST"
+      - name: Restore and verify the active generation
+        if: inputs.operation == 'verify'
+        run: python3 -m scripts.boise_collect.transfer verify-active --environment "$TARGET" --account "$ARCHIVE_ACCOUNT" >> "$GITHUB_STEP_SUMMARY"
+      - name: Restore the replicated production generation
+        if: inputs.operation == 'verify-recovery'
+        run: python3 -m scripts.boise_collect.transfer verify-recovery --environment "$TARGET" --account "$ARCHIVE_ACCOUNT" >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish archive worker image
+        if: inputs.operation == 'image'
+        run: bash scripts/archive-image.sh
+      - name: Release archive worker by digest
+        if: inputs.operation == 'release'
+        run: bash scripts/archive-release.sh
+
+      - name: Run bounded archive job
+        if: inputs.operation == 'run'
+        run: |
+          python3 - <<'PYTHON'
+          import json, os
+          from scripts.boise_collect.hosted import scope
+          event = json.loads(os.environ["JOB"])
+          operation, _ = scope(event)
+          if operation == "scheduled":
+              raise ValueError("scheduled events belong to EventBridge")
+          with open("job.json", "w") as f:
+              json.dump(event, f)
+          PYTHON
+          result=$(aws lambda invoke --function-name "soccer-archive-$TARGET-worker" --payload fileb://job.json --cli-read-timeout 915 --query FunctionError --output text job-result.json)
+          test "$result" = None
+          jq -c '{status,job,spent,budget,generation,gaps,next_request_at} | with_entries(select(.value != null))' job-result.json >> "$GITHUB_STEP_SUMMARY"

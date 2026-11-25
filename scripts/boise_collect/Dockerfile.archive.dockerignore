@@ -1,0 +1,8 @@
+**
+!scripts/
+!scripts/boise_collect/
+!scripts/boise_collect/*.py
+!scripts/boise_collect/bruno/
+!scripts/boise_collect/bruno/package*.json
+!scripts/boise_collect/bruno/*.bru
+!scripts/boise_collect/bruno/bruno.json

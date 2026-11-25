@@ -13,6 +13,7 @@ vars:
   # shell (Task's rule: the process environment wins), and then `ENV=prod`
   # would silently keep using dev's cache and backend.
   TOFU: 'TF_DATA_DIR="{{.ROOT_DIR}}/infra/.terraform.{{.ENV}}" tofu'
+  ARCHIVE_TOFU: 'TF_DATA_DIR="{{.ROOT_DIR}}/infra/archive/.terraform.{{.ENV}}" tofu -chdir=infra/archive'
   TOFU_OFFLINE: 'TF_DATA_DIR="{{.ROOT_DIR}}/infra/.terraform" tofu'
   TOFU_BOOTSTRAP: 'TF_DATA_DIR="{{.ROOT_DIR}}/infra/bootstrap/.terraform" tofu'
   TOFU_BOOTSTRAP_OFFLINE: 'TF_DATA_DIR="{{.ROOT_DIR}}/infra/bootstrap/.terraform.offline" tofu'
@@ -54,6 +55,70 @@ tasks:
     cmds:
       - node --check scripts/boise_collect/web/app.js
       - python3 -m unittest scripts.boise_collect.tests.test_explorer_data scripts.boise_collect.tests.test_explorer_http -v
+
+  archive:export:
+    desc: Create a private immutable generation from a locked local dataset
+    cmds:
+      - python3 -m scripts.boise_collect.publication export {{.CLI_ARGS}}
+
+  archive:verify:
+    desc: Restore the complete generation into temporary storage and verify it
+    cmds:
+      - python3 -m scripts.boise_collect.publication verify {{.CLI_ARGS}}
+
+  archive:restore:
+    desc: Restore a verified generation to a new local directory
+    cmds:
+      - python3 -m scripts.boise_collect.publication restore {{.CLI_ARGS}}
+
+  archive:stage:
+    desc: Upload an approved generation with its short-lived staging role
+    cmds:
+      - python3 -m scripts.boise_collect.transfer stage {{.CLI_ARGS}}
+
+  archive:image:build:
+    desc: Build and load the Arm Lambda worker image locally
+    cmds:
+      - docker buildx build --platform linux/arm64 --provenance=false --sbom=false --load --build-arg "ARCHIVE_SOURCE_REVISION=$(git rev-parse HEAD)" --file scripts/boise_collect/Dockerfile.archive --tag soccer-archive-worker:local .
+
+  archive:infra:check:
+    desc: Validate and test the archive infrastructure with a mock provider
+    cmds:
+      - tofu fmt -check -recursive infra/archive
+      - TF_DATA_DIR="{{.ROOT_DIR}}/infra/archive/.terraform.offline" tofu -chdir=infra/archive init -backend=false -input=false -lockfile=readonly >/dev/null
+      - TF_DATA_DIR="{{.ROOT_DIR}}/infra/archive/.terraform.offline" tofu -chdir=infra/archive validate
+      - TF_DATA_DIR="{{.ROOT_DIR}}/infra/archive/.terraform.offline" tofu -chdir=infra/archive test
+
+  archive:infra:init:
+    desc: Initialize the separate selected archive state for an infrastructure plan
+    deps: [archive:infra:inputs]
+    cmds:
+      - '{{.ARCHIVE_TOFU}} init -input=false -lockfile=readonly -backend-config="../environments/archive-{{.ENV}}.tfbackend"'
+
+  archive:infra:plan:
+    desc: Write the selected archive plan for review
+    deps: [archive:infra:inputs]
+    cmds:
+      - '{{.ARCHIVE_TOFU}} plan -input=false -lock-timeout=5m -var-file="../environments/archive-{{.ENV}}.tfvars" -out="archive.{{.ENV}}.tfplan"'
+
+  archive:infra:apply:
+    desc: Apply a specifically approved archive plan
+    deps: [archive:infra:inputs]
+    cmds:
+      - '{{.ARCHIVE_TOFU}} apply -input=false -lock-timeout=5m "archive.{{.ENV}}.tfplan"'
+
+  archive:infra:inputs:
+    internal: true
+    silent: true
+    requires:
+      vars:
+        - name: ENV
+          enum: [dev, prod]
+    preconditions:
+      - sh: git diff --quiet HEAD -- infra/archive/.terraform.lock.hcl
+        msg: The archive provider lock must match the reviewed commit
+      - sh: test -n "${AWS_PROFILE:-}" || test -n "${AWS_ACCESS_KEY_ID:-}"
+        msg: Select the workloads account credentials for this archive plan
 
   fmt:
     desc: Format Go code
@@ -120,6 +185,7 @@ tasks:
       - '{{.TOFU_BOOTSTRAP_OFFLINE}} -chdir=infra/bootstrap init -backend=false -input=false -lockfile=readonly >/dev/null'
       - '{{.TOFU_BOOTSTRAP_OFFLINE}} -chdir=infra/bootstrap validate'
       - '{{.TOFU_BOOTSTRAP_OFFLINE}} -chdir=infra/bootstrap test'
+      - task: archive:infra:check
 
   infra:init:
     desc: Point the ENV deployment (default dev) at its state (infra/environments/<ENV>.tfbackend)

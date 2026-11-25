@@ -6,11 +6,13 @@ GitHub Actions deploys both. A computer is used only to test a change, and once,
 
 Wherever this page says a computer, a cloud thread counts as one: a Claude Code session in a cloud container, not on Craig's computer. It has the same tools and AWS profiles, so the same `task`, `tofu` and `aws` commands apply. Its sign-in differs (step 1 of the [One-time setup](#one-time-setup)), and every approval this page asks for is still needed. Cloud threads have so far run read-only AWS calls, `tofu init` and `plan` with an administrator profile, and one approved apply; none has yet applied an IAM change, which is what `infra/bootstrap` and a first apply make. Approving production and the GitHub environment settings stay Craig's, on his phone or in any browser.
 
+The historical archive uses its own state, roles and protected workflows. See the [archive deployment and recovery runbook](archive-migration.md).
+
 ## How a change gets deployed
 
 **On a pull request,** the `CI` workflow runs `task ci`: gofmt, vet, the Go tests, the Lambda build, and the OpenTofu checks for both roots against a mocked provider. It has no secrets and no cloud role, so it cannot touch AWS. Nothing is planned on a pull request.
 
-**On `main`,** a push that changes what is deployed (the Go code, `go.mod` and `go.sum`, `infra/` other than its tests and `infra/bootstrap`, `scripts/smoke.sh`, `Taskfile.yaml` or the workflow itself) starts the `Deploy` workflow. A change to docs alone deploys nothing.
+**On `main`,** a push that changes what is deployed (the Go code, `go.mod` and `go.sum`, calendar `infra/` other than its tests, `infra/bootstrap`, the archive root and archive environment inputs, `scripts/smoke.sh`, `Taskfile.yaml` or the workflow itself) starts the `Deploy` workflow. A change to docs alone deploys nothing.
 
 1. **Build,** once. The Go tests run, `task lambda` makes `dist/soccer.zip`, and the zip is kept as a workflow artifact named after the commit.
 2. **Deploy dev,** with no approval. The job signs in to AWS as `soccer-deployer-dev` through GitHub OIDC, runs `task infra:init` and plans with the build's zip (`task infra:plan:zip`), checks that the plan keeps the function's role ([The deploy roles](#the-deploy-roles)), then applies that exact plan (`task infra:apply`). The plan's resource lines and totals are on the run's summary page, and the full plan is in the log; the backend has no secrets, so neither shows anything private. Then `task infra:smoke` runs two checks:
