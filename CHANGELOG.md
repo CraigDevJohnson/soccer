@@ -7,6 +7,7 @@ merged. Dependency updates are left out.
 ## 2026-11-25
 
 - Add the Boise collector, verified archive import and private AWS refresh worker. Collection and the daily schedule start disabled.
+- Fix explorer startup on SQLite builds without extension loading and include games with missing registration details in team filters.
 - Preserve queued daily refreshes and accepted observations during job recovery and retirement. Deploy routine archive changes through dev and production using the reviewed image digest.
 
 ## 2026-11-17

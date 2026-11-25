@@ -108,6 +108,36 @@ class ExplorerDataTests(unittest.TestCase):
         self.assertEqual(missing["standings"], [])
         self.assertEqual(self.archive.detail("sessions", "327")["item"]["division_count"], 2)
 
+    def test_team_filter_uses_game_ids_when_registration_metadata_is_missing(self):
+        sparse = game(103)
+        del sparse["home_team"], sparse["visitor_team"]
+        sparse.update(UTeam1=41, UTeam2=42)
+        body = {"data": {"1": [{"game": sparse, "field": 1}]}}
+        with closing(Store(self.root, "http://127.0.0.1:12345")) as store:
+            store.requeue("day", DAY)
+            attempt = store.start_attempt("day", DAY, 300)
+            store.succeed(attempt, parse_response("day", DAY, body), "c" * 64, 301)
+        self.archive.reload()
+        self.assertEqual(self.archive.list_items("games", {})["total"], 3)
+        for participant in ("41", "42"):
+            with self.subTest(participant=participant):
+                matches = self.archive.list_items("games", {"team": participant})
+                self.assertEqual([item["id"] for item in matches["items"]], ["103"])
+
+    def test_archive_opens_without_sqlite_extension_loading_support(self):
+        class NoExtensionSupport(sqlite3.Connection):
+            @property
+            def enable_load_extension(self):
+                raise AttributeError("SQLite extension loading unavailable")
+
+        connect = sqlite3.connect
+        with patch("scripts.boise_collect.explorer_data.sqlite3.connect",
+                   side_effect=lambda *a, **kw: connect(*a, factory=NoExtensionSupport, **kw)):
+            archive = Archive(self.root)
+            self.assertEqual(archive.sql("SELECT COUNT(*) FROM games")["rows"], [[2]])
+            with self.assertRaises(QueryError):
+                archive.sql("DELETE FROM games")
+
     def test_names_use_verified_report_labels_and_dates_use_observations(self):
         self.assertEqual(self.archive.detail("divisions", "11")["item"]["name"], "League 11")
         session = self.archive.detail("sessions", "327")["item"]

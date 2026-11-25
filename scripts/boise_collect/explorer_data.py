@@ -95,10 +95,11 @@ class Archive:
     @contextmanager
     def _connection(self):
         connection = sqlite3.connect(self.database.as_uri() + "?mode=ro", uri=True, timeout=1)
-        connection.row_factory = sqlite3.Row
-        connection.enable_load_extension(False)
-        connection.execute("PRAGMA query_only=ON")
         try:
+            connection.row_factory = sqlite3.Row
+            if hasattr(connection, "enable_load_extension"):
+                connection.enable_load_extension(False)
+            connection.execute("PRAGMA query_only=ON")
             yield connection
         finally:
             connection.close()
@@ -193,9 +194,10 @@ class Archive:
                     game[side + "_name"] = team.get("name")
                     for key in ("division_id", "division_name", "session_id", "session_number"):
                         game[side + "_" + key] = team.get(key)
-                    for kind, field in (("team", "id"), ("division", "division_id"), ("session", "session_id")):
-                        if team.get(field) is not None:
-                            game_index[kind][team[field]].add(row["id"])
+                    for kind, ident in (("team", row[side + "_id"]), ("division", team.get("division_id")),
+                                        ("session", team.get("session_id"))):
+                        if ident is not None:
+                            game_index[kind][ident].add(row["id"])
                 games[row["id"]] = game
                 game_snapshots[row["id"]] = row["snapshot_id"]
                 if row["start_local"]:
