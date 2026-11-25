@@ -495,6 +495,8 @@ class _Parser:
                 else:
                     raise ValidationError(f"{path}: unrecognized schedule slot")
             evidence["data"][group] = clean_slots
+        if not self.games and any(anchor.date().isoformat() != key for anchor in (opening, closing) if anchor):
+            raise ValidationError("empty schedule date disagrees with requested day")
         self.parsed.evidence = evidence
 
     def catalog_response(self, body):

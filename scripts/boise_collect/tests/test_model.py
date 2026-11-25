@@ -167,6 +167,19 @@ class ModelTests(unittest.TestCase):
                     with self.assertRaises(ValidationError):
                         parse_response("day", "2026-10-12", source)
 
+    def test_empty_day_must_agree_with_supplied_date_anchors(self):
+        wrong_day = "2026-10-11T16:00:00.000Z"
+        same_day = "2026-10-12T16:00:00.000Z"
+        for data in ({}, {"1": []}, {"1": [{"practice": None}]}):
+            for anchors in ({"open_at": wrong_day}, {"close_at": wrong_day},
+                            {"open_at": wrong_day, "close_at": wrong_day},
+                            {"open_at": same_day, "close_at": wrong_day}):
+                with self.subTest(data=data, anchors=anchors), self.assertRaises(ValidationError):
+                    parse_response("day", "2026-10-12", {"data": data, **anchors})
+            for anchors in ({}, {"open_at": None}, {"open_at": same_day, "close_at": same_day}):
+                with self.subTest(data=data, anchors=anchors):
+                    self.assertEqual(parse_response("day", "2026-10-12", {"data": data, **anchors}).games, [])
+
     def test_same_day_games_remain_valid_without_date_metadata(self):
         for metadata in ({}, {"open_at": None, "close_at": None}):
             with self.subTest(metadata=metadata):

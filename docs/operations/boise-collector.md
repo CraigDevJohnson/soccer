@@ -186,6 +186,8 @@ division's detailed standings snapshot. Raw source dates before 2000 or reversed
 date ranges remain unchanged and flagged. Existing schema-version-1 archives gain
 only additive refresh-job and gap-acknowledgment tables when opened by the collector.
 
+An empty schedule with opening or closing dates for a different day is invalid. An empty schedule with no date metadata remains valid.
+
 Day responses can publish games starting on the next calendar date, including schedules with idle time between games. The archive accepts these records only when both `open_at` and `close_at` dates match the requested date and the same field contains a fully validated game on that requested date. It preserves the actual timestamp and records a next-day publication warning. This is a conservative archive acceptance policy based on observed responses, not a documented provider operating-hours contract. Isolated next-day records, mismatched or absent date anchors, previous-day records, and dates beyond the immediately following day still fail validation. No clock cutoff or missing intervening game is inferred.
 
 ## Read the coverage report
