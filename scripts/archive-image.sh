@@ -2,7 +2,6 @@
 set -euo pipefail
 registry="$ARCHIVE_ACCOUNT.dkr.ecr.us-west-2.amazonaws.com"
 repository="soccer-archive-$TARGET-worker"
-aws ecr get-login-password | docker login --username AWS --password-stdin "$registry"
 if [[ "$TARGET" == prod ]]; then
     dev_image=$(aws lambda get-function --function-name soccer-archive-dev-worker --query Code.ResolvedImageUri --output text)
     digest=${dev_image##*@}
@@ -15,10 +14,10 @@ fi
 lookup=$(aws ecr batch-get-image --repository-name "$repository" --image-ids "imageTag=$tag" --query 'images[0].imageId.imageDigest' --output text)
 if [[ "$lookup" == None ]]; then
     if [[ "$TARGET" == prod ]]; then
-        docker pull "$dev_image"
-        docker tag "$dev_image" "$registry/$repository:$tag"
-        docker push "$registry/$repository:$tag"
+        aws ecr get-login-password | skopeo login --username AWS --password-stdin "$registry"
+        skopeo copy --preserve-digests "docker://$dev_image" "docker://$registry/$repository:$tag"
     else
+        aws ecr get-login-password | docker login --username AWS --password-stdin "$registry"
         docker buildx build --platform linux/arm64 --provenance=false --sbom=false \
             --build-arg "ARCHIVE_SOURCE_REVISION=$GITHUB_SHA" \
             --file scripts/boise_collect/Dockerfile.archive --tag "$registry/$repository:$tag" --push .

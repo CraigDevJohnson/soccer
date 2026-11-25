@@ -1,0 +1,81 @@
+name: Plan or apply the archive environment
+on:
+  workflow_call:
+    inputs:
+      target: {required: true, type: string}
+      mode: {required: true, type: string}
+      reviewed: {required: false, type: string}
+    outputs:
+      digest:
+        description: SHA-256 of the reviewed resource and output changes
+        value: ${{ jobs.deploy.outputs.digest }}
+permissions: {}
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Activation owns the live schedule state. A schedule update must not race a mode switch.
+    concurrency:
+      group: ${{ inputs.mode == 'apply' && 'archive-writer-activation' || 'archive-infra-preview' }}
+      queue: max
+    environment: archive-${{ inputs.mode == 'plan' && 'infra-plan' || 'infra' }}-${{ inputs.target }}
+    permissions: {contents: read, id-token: write}
+    outputs:
+      digest: ${{ steps.review.outputs.digest }}
+    env:
+      ENV: ${{ inputs.target }}
+      MODE: ${{ inputs.mode }}
+      REVIEWED: ${{ inputs.reviewed }}
+      TF_CLI_ARGS: -no-color
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - name: Check environment and revision
+        run: |
+          case "$ENV/$MODE" in dev/apply|prod/plan) test -z "$REVIEWED" ;; prod/apply) [[ "$REVIEWED" =~ ^[0-9a-f]{64}$ ]] ;; *) exit 1 ;; esac
+          git fetch --no-tags --depth=1 origin main
+          git diff --quiet HEAD FETCH_HEAD -- infra/archive ':(exclude)infra/archive/tests' 'infra/environments/archive-*' scripts/archive_infra_plan.py scripts/boise_collect/activation.py scripts/boise_collect/transfer.py Taskfile.yaml '.github/workflows/archive-infra*.yml'
+          account=$(sed -nE 's/^account_id[[:space:]]*=[[:space:]]*"([0-9]{12})".*/\1/p' "infra/environments/archive-$ENV.tfvars")
+          [[ "$account" =~ ^[0-9]{12}$ ]]
+          echo "ARCHIVE_ACCOUNT=$account" >> "$GITHUB_ENV"
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: 1.13.1
+          tofu_wrapper: false
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with: {version: 3.x}
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          aws-region: us-west-2
+          allowed-account-ids: ${{ env.ARCHIVE_ACCOUNT }}
+          role-to-assume: arn:aws:iam::${{ env.ARCHIVE_ACCOUNT }}:role/soccer-archive-${{ inputs.target }}-${{ inputs.mode == 'plan' && 'infra-plan' || 'infra' }}
+      - name: Plan against the existing environment
+        run: |
+          task archive:infra:init ENV="$ENV"
+          if [[ "$MODE" == plan ]]; then export TF_CLI_ARGS_plan=-lock=false; fi
+          task archive:infra:plan ENV="$ENV"
+      - name: Review routine changes
+        id: review
+        run: |
+          plan="archive.$ENV.tfplan"
+          export TF_DATA_DIR="$PWD/infra/archive/.terraform.$ENV"
+          tofu -chdir=infra/archive show -json "$plan" > "$RUNNER_TEMP/archive-plan.json"
+          digest=$(python3 -m scripts.archive_infra_plan "$RUNNER_TEMP/archive-plan.json")
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Archive $ENV at \`$GITHUB_SHA\`"
+            echo "Reviewed plan fingerprint: \`$digest\`"
+            echo '~~~text'
+            tofu -chdir=infra/archive show -no-color "$plan"
+            echo '~~~'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$ENV/$MODE" == prod/apply && "$digest" != "$REVIEWED" ]]; then
+            echo "::error::Production changed after the preview. Dispatch a new run to review the current plan."
+            exit 1
+          fi
+      - name: Apply the saved plan
+        if: inputs.mode == 'apply'
+        run: |
+          python3 -m scripts.archive_infra_plan "$RUNNER_TEMP/archive-plan.json" --check-release "$ENV" "$ARCHIVE_ACCOUNT"
+          task archive:infra:apply ENV="$ENV"

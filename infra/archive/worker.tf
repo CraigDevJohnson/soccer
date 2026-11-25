@@ -42,6 +42,13 @@ resource "aws_iam_role_policy" "worker" {
   })
 }
 
+# Verified tags are immutable and are published only from the dev worker's active digest.
+data "aws_ecr_image" "promoted" {
+  count           = local.worker_enabled && var.site_environment == "prod" ? 1 : 0
+  repository_name = local.worker_name
+  image_tag       = "verified-${trimprefix(var.image_digest, "sha256:")}"
+}
+
 resource "aws_lambda_function" "worker" {
   count                          = local.worker_enabled ? 1 : 0
   function_name                  = local.worker_name
@@ -55,8 +62,12 @@ resource "aws_lambda_function" "worker" {
   reserved_concurrent_executions = 1
   ephemeral_storage { size = 2048 }
   environment { variables = { ARCHIVE_BUCKET = aws_s3_bucket.archive.bucket } }
-  # Creation uses the bootstrap digest. Protected release jobs promote later images.
-  lifecycle { ignore_changes = [image_uri] }
+  lifecycle {
+    precondition {
+      condition     = var.site_environment == "prod" ? data.aws_ecr_image.promoted[0].image_digest == var.image_digest : true
+      error_message = "Production requires the exact image promoted from dev under its immutable verified tag."
+    }
+  }
   depends_on = [
     aws_ecr_repository_policy.worker, aws_iam_role_policy.worker,
     aws_s3_bucket_policy.archive, aws_s3_bucket_versioning.archive,

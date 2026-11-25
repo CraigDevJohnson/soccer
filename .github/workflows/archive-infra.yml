@@ -1,0 +1,48 @@
+name: Deploy archive infrastructure
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - infra/archive/**
+      - '!infra/archive/tests/**'
+      - infra/environments/archive-*
+      - scripts/archive_infra_plan.py
+      - scripts/boise_collect/activation.py
+      - scripts/boise_collect/transfer.py
+      - Taskfile.yaml
+      - .github/workflows/archive-infra*.yml
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  dev:
+    if: github.ref == 'refs/heads/main' && vars.ARCHIVE_INFRA_DEV_READY == 'true'
+    uses: ./.github/workflows/archive-infra-job.yml
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      target: dev
+      mode: apply
+  preview-production:
+    needs: dev
+    if: vars.ARCHIVE_INFRA_PROD_READY == 'true'
+    uses: ./.github/workflows/archive-infra-job.yml
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      target: prod
+      mode: plan
+  production:
+    needs: preview-production
+    uses: ./.github/workflows/archive-infra-job.yml
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      target: prod
+      mode: apply
+      reviewed: ${{ needs.preview-production.outputs.digest }}

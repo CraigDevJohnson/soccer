@@ -45,7 +45,7 @@ variable "site_environment" {
 variable "image_digest" {
   type        = string
   default     = null
-  description = "Digest pushed to this environment's ECR repository. The first apply leaves it unset to create storage and the repository."
+  description = "Reviewed worker image digest in this environment's ECR repository. Set it in the environment tfvars for worker creation, subsequent releases and replacement."
   validation {
     condition     = var.image_digest == null || can(regex("^sha256:[0-9a-f]{64}$", var.image_digest))
     error_message = "Specify an immutable sha256 image digest."
@@ -56,8 +56,8 @@ variable "architecture" {
   type    = string
   default = "arm64"
   validation {
-    condition     = contains(["arm64", "x86_64"], var.architecture)
-    error_message = "Choose the architecture of the single-platform image."
+    condition     = var.architecture == "arm64"
+    error_message = "The archive worker image is built for arm64."
   }
 }
 
@@ -96,7 +96,6 @@ output "worker_repository_url" { value = aws_ecr_repository.worker.repository_ur
 output "worker_function_name" { value = one(aws_lambda_function.worker[*].function_name) }
 output "image_publisher_role_arn" { value = aws_iam_role.github["image"].arn }
 output "import_role_arn" { value = aws_iam_role.github["import"].arn }
-output "release_role_arn" { value = aws_iam_role.github["release"].arn }
 output "activation_role_arn" { value = aws_iam_role.github["activation"].arn }
 output "run_role_arn" { value = aws_iam_role.github["run"].arn }
 output "staging_role_arn" { value = one(aws_iam_role.stage[*].arn) }

@@ -4,7 +4,7 @@ locals {
 }
 
 resource "aws_iam_role" "github" {
-  for_each = toset(concat(["activation", "image", "import", "release", "run"], local.keep_recovery ? ["recovery"] : []))
+  for_each = toset(concat(["activation", "image", "import", "run"], local.keep_recovery ? ["recovery"] : []))
   name     = "${local.prefix}-${each.key}"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -97,32 +97,6 @@ resource "aws_iam_role_policy" "stage" {
       Action   = ["s3:GetObject", "s3:PutObject"]
       Resource = [for file in ["archive.tar.gz", "manifest.json"] : "${local.bucket_arn}/staging/${var.staging_access.generation}/${file}"]
     }]
-  })
-}
-
-resource "aws_iam_role_policy" "release" {
-  name = "release-worker-image"
-  role = aws_iam_role.github["release"].id
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = concat([
-      {
-        Effect   = "Allow"
-        Action   = ["lambda:UpdateFunctionCode", "lambda:GetFunctionConfiguration", "lambda:GetFunction"]
-        Resource = local.worker_arn
-      },
-      {
-        Effect   = "Allow"
-        Action   = ["ecr:GetRepositoryPolicy", "ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"]
-        Resource = aws_ecr_repository.worker.arn
-      }
-      ], var.site_environment == "prod" ? [
-      {
-        Effect   = "Allow"
-        Action   = ["lambda:GetFunction"]
-        Resource = local.dev_worker_arn
-      }
-    ] : [])
   })
 }
 

@@ -11,10 +11,10 @@ on:
       operation:
         description: Archive operation
         type: choice
-        options: [image, import, release, run, verify, verify-recovery]
+        options: [image, import, run, verify, verify-recovery]
         required: true
       digest:
-        description: Generation ID for import, sha256 image digest for release, empty for other operations
+        description: Generation ID for import, empty for other operations
         type: string
         required: false
       job:
@@ -55,7 +55,6 @@ jobs:
             image|run|verify) test -z "$DIGEST" ;;
             verify-recovery) [[ "$TARGET" == prod && -z "$DIGEST" ]] ;;
             import) [[ "$DIGEST" =~ ^[a-f0-9]{64}$ ]] ;;
-            release) [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]] ;;
             *) exit 1 ;;
           esac
           account=$(sed -nE 's/^account_id[[:space:]]*=[[:space:]]*"([0-9]{12})".*/\1/p' "infra/environments/$TARGET.tfvars")
@@ -84,9 +83,6 @@ jobs:
       - name: Publish archive worker image
         if: inputs.operation == 'image'
         run: bash scripts/archive-image.sh
-      - name: Release archive worker by digest
-        if: inputs.operation == 'release'
-        run: bash scripts/archive-release.sh
 
       - name: Run bounded archive job
         if: inputs.operation == 'run'
@@ -103,4 +99,4 @@ jobs:
           PYTHON
           result=$(aws lambda invoke --function-name "soccer-archive-$TARGET-worker" --payload fileb://job.json --cli-read-timeout 915 --query FunctionError --output text job-result.json)
           test "$result" = None
-          jq -c '{status,job,spent,budget,generation,gaps,next_request_at} | with_entries(select(.value != null))' job-result.json >> "$GITHUB_STEP_SUMMARY"
+          jq -c '{status,job,spent,budget,generation,gaps,next_request_at,queued_daily,retiring,retired} | with_entries(select(.value != null))' job-result.json >> "$GITHUB_STEP_SUMMARY"

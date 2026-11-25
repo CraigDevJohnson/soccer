@@ -23,7 +23,9 @@ jobs:
     timeout-minutes: 5
     environment: archive-activation-${{ inputs.target }}
     # A stop can run while a manual collection job is still in flight.
-    concurrency: archive-writer-activation
+    concurrency:
+      group: archive-writer-activation
+      queue: max
     permissions:
       id-token: write
       contents: read

@@ -1,4 +1,7 @@
 mock_provider "aws" {
+  mock_data "aws_ecr_image" {
+    defaults = { image_digest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" }
+  }
   mock_resource "aws_iam_role" {
     defaults = { arn = "arn:aws:iam::111122223333:role/mock" }
   }
@@ -175,13 +178,13 @@ run "production_promotion_keeps_dev_read_only" {
       jsondecode(aws_iam_role_policy.activation.policy).Statement[3].Resource == "arn:aws:scheduler:us-west-2:111122223333:schedule/soccer-archive-prod/refresh" &&
       jsondecode(aws_iam_role_policy.activation.policy).Statement[4].Condition.StringEquals["iam:PassedToService"] == "scheduler.amazonaws.com" &&
       jsondecode(aws_iam_role_policy.activation.policy).Statement[4].Resource == "arn:aws:iam::111122223333:role/soccer-archive-prod-scheduler" &&
-      jsondecode(aws_iam_role_policy.release.policy).Statement[0].Resource == "arn:aws:lambda:us-west-2:111122223333:function:soccer-archive-prod-worker" &&
-      jsondecode(aws_iam_role_policy.release.policy).Statement[2].Action == ["lambda:GetFunction"] &&
-      jsondecode(aws_iam_role_policy.release.policy).Statement[2].Resource == "arn:aws:lambda:us-west-2:111122223333:function:soccer-archive-dev-worker" &&
+      !contains(keys(aws_iam_role.github), "release") &&
+      data.aws_ecr_image.promoted[0].repository_name == "soccer-archive-prod-worker" &&
+      data.aws_ecr_image.promoted[0].image_tag == "verified-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" &&
       toset(jsondecode(aws_iam_role_policy.image.policy).Statement[2].Action) == toset(["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer", "ecr:BatchCheckLayerAvailability", "ecr:DescribeImages"]) &&
       jsondecode(aws_iam_role_policy.image.policy).Statement[2].Resource == "arn:aws:ecr:us-west-2:111122223333:repository/soccer-archive-dev-worker"
     )
-    error_message = "Production can read the tested dev image and release to its own worker only."
+    error_message = "Production can read the tested dev image; worker code releases use the reviewed infrastructure plan."
   }
 }
 
@@ -227,4 +230,22 @@ run "attention_and_delivery_notify_existing_alerts" {
     )
     error_message = "Page for a job requiring operator action and for expired events on either side of the asynchronous Lambda invocation."
   }
+}
+
+run "reject_architecture_without_a_published_image" {
+  command = plan
+  variables {
+    architecture = "x86_64"
+    image_digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+  expect_failures = [var.architecture]
+}
+
+run "reject_production_image_without_verified_digest" {
+  command = plan
+  variables {
+    site_environment = "prod"
+    image_digest     = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  }
+  expect_failures = [aws_lambda_function.worker[0]]
 }

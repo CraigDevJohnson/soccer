@@ -91,7 +91,7 @@ The archive preserves public Boise game schedules, registrations, official stand
 
 The [collector](docs/operations/boise-collector.md) keeps SQLite, sanitized source evidence and coverage reports. The [local explorer](docs/operations/boise-explorer.md) browses the dataset on loopback. Node 24+, Python 3.11+ and `task collector:setup` install the locked Bruno transport for collection and offline tests.
 
-The [migration runbook](docs/operations/archive-migration.md) covers portable generations and the separate private AWS worker. Each import verifies a complete restore. A protected GitHub Actions workflow can admit a bounded refresh, inspect its status and resume its remaining work. The scheduler starts disabled and the worker checks collection permission before contacting the league. The Lobby archive workspace remains a later delivery.
+The [migration runbook](docs/operations/archive-migration.md) covers portable generations and the separate private AWS worker. Each import verifies a complete restore. A protected GitHub Actions workflow can admit a bounded refresh, inspect its status, resume its remaining work or retire it with its accepted observations and gaps. The scheduler starts disabled and the worker checks collection permission before contacting the league. After the approved bootstrap, merged archive infrastructure changes go to dev first and require approval for production. Each environment’s committed image digest selects its worker, including replacements. During cutover, dev rehearses the import with collection off and production receives the first live observations. The Lobby archive workspace remains a later delivery.
 
 ## Running it
 
