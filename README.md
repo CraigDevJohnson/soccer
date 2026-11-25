@@ -85,9 +85,17 @@ It fails as a download does, with nothing left out.
 
 One JSON line per request with the route pattern (never the path, so link tokens and searches stay out), status, timing and user agent. The route of each `POST` says which output a person chose; the user agent on `/links/{token}` says which calendar app fetched a link. A Member link's secret never reaches this backend.
 
+## Boise historical archive
+
+The archive preserves public Boise game schedules, registrations, official standings and the league's published player-ID leader entries. A failed date or missing score stays unknown. Historical registrations with the same name retain their own IDs. The archive runs independently of the calendar backend.
+
+The [collector](docs/operations/boise-collector.md) keeps SQLite, sanitized source evidence and coverage reports. The [local explorer](docs/operations/boise-explorer.md) browses the dataset on loopback. Its team filter finds games by either participant ID even when the league omits the registration details. Node 24+, Python 3.11+ and `task collector:setup` install the locked Bruno transport for collection and offline tests.
+
+The [migration runbook](docs/operations/archive-migration.md) covers portable generations and the separate private AWS worker. Each import verifies a complete restore. A protected GitHub Actions workflow can admit a bounded refresh, inspect its status, resume its remaining work or retire it with its accepted observations and gaps. The scheduler starts disabled and the worker checks collection permission before contacting the league. After the approved bootstrap, merged archive infrastructure changes go to dev first and require approval for production. Each environment’s committed image digest selects its worker, including replacements. During cutover, dev rehearses the import with collection off and production receives the first live observations. The Lobby archive workspace remains a later delivery.
+
 ## Running it
 
-Needs Go (see `go.mod`) and [Task](https://taskfile.dev).
+The calendar server needs Go (see `go.mod`) and [Task](https://taskfile.dev). Run `task collector:setup` before the combined `task ci`.
 
 ```sh
 task run          # http://127.0.0.1:8081 (SOCCER_ADDR to change)

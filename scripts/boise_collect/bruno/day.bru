@@ -1,0 +1,10 @@
+meta {
+  name: Boise day schedule
+  type: http
+  seq: 1
+}
+get {
+  url: {{baseUrl}}/games?facility_id=4&date={{date}}&complete_information=true
+  body: none
+  auth: none
+}

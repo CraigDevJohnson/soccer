@@ -23,6 +23,8 @@ on:
       - infra/**
       - '!infra/bootstrap/**'
       - '!infra/tests/**'
+      - '!infra/archive/**'
+      - '!infra/environments/archive-*'
       - scripts/smoke.sh
       - Taskfile.yaml
       - .github/workflows/deploy.yml
@@ -104,7 +106,7 @@ jobs:
         # The paths are the push trigger's.
         run: |
           git fetch --no-tags --depth=1 origin main
-          if ! git diff --quiet HEAD FETCH_HEAD -- cmd internal go.mod go.sum infra ':(exclude)infra/bootstrap' ':(exclude)infra/tests' scripts/smoke.sh Taskfile.yaml .github/workflows/deploy.yml; then
+          if ! git diff --quiet HEAD FETCH_HEAD -- cmd internal go.mod go.sum infra ':(exclude)infra/bootstrap' ':(exclude)infra/tests' ':(exclude)infra/archive' ':(exclude)infra/environments/archive-*' scripts/smoke.sh Taskfile.yaml .github/workflows/deploy.yml; then
             echo "::error::main has newer changes to what is deployed; their own Deploy run deploys dev" >&2
             exit 1
           fi
@@ -205,7 +207,7 @@ jobs:
         # The paths are the push trigger's.
         run: |
           git fetch --no-tags --depth=1 origin main
-          if ! git diff --quiet HEAD FETCH_HEAD -- cmd internal go.mod go.sum infra ':(exclude)infra/bootstrap' ':(exclude)infra/tests' scripts/smoke.sh Taskfile.yaml .github/workflows/deploy.yml; then
+          if ! git diff --quiet HEAD FETCH_HEAD -- cmd internal go.mod go.sum infra ':(exclude)infra/bootstrap' ':(exclude)infra/tests' ':(exclude)infra/archive' ':(exclude)infra/environments/archive-*' scripts/smoke.sh Taskfile.yaml .github/workflows/deploy.yml; then
             echo "::error::main has newer changes to what is deployed; their own Deploy run deploys production" >&2
             exit 1
           fi

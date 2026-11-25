@@ -14,6 +14,8 @@
 
 **Spec:** The proposed design and contracts in this document, together with the soccer README, The Lobby's current README/ADRs and `aws-setup/aws-design.md`. This plan proposes extensions to those specifications, not already accepted changes to them.
 
+**Implementation update, November 25, 2026.** Craig authorized local implementation of the archive transfer and jobs. The [migration runbook](../../operations/archive-migration.md) describes the implemented S3 checkpoint and single-worker design, the November 11 archive, and the outstanding deployment approvals. The checkboxes below preserve the original proposal.
+
 ## Scope and constraints
 
 - Boise only, facility ID `4`.

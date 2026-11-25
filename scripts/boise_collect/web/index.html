@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Boise Soccer Archive</title>
+  <link rel="icon" href="/app-icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to results</a>
+  <div class="shell">
+    <aside class="sidebar">
+      <a class="brand" href="#sessions" aria-label="Boise Soccer Archive home">
+        <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 40 40"><rect x="5" y="5" width="30" height="30" rx="3"/><path d="M20 5v30M5 13h7v14H5m30-14h-7v14h7"/><circle cx="20" cy="20" r="6"/></svg></span>
+        <span>BOISE<span class="brand-sub">SOCCER ARCHIVE</span></span>
+      </a>
+      <div class="sidebar-label">Explore records</div>
+      <nav aria-label="Archive sections">
+        <a href="#sessions" data-view="sessions"><span class="nav-icon" aria-hidden="true">▤</span>Sessions<span class="nav-count" id="session-count"></span></a>
+        <a href="#teams" data-view="teams"><span class="nav-icon" aria-hidden="true">◈</span>Teams</a>
+        <a href="#players" data-view="players"><span class="nav-icon" aria-hidden="true">◎</span>Players</a>
+        <a href="#games" data-view="games"><span class="nav-icon" aria-hidden="true">◇</span>Games</a>
+        <div class="nav-divider"></div>
+        <a href="#query" data-view="query"><span class="nav-icon code-icon" aria-hidden="true">›_</span>Query</a>
+        <a href="#coverage" data-view="coverage"><span class="nav-icon" aria-hidden="true">◫</span>Coverage<span class="nav-count gap-count" id="gap-count"></span></a>
+      </nav>
+      <div class="sidebar-bottom">
+        <div class="local-status"><span class="status-dot"></span>On this Mac · Read-only</div>
+        <p>Boise · Facility 4<br>Times shown in Mountain time</p>
+      </div>
+    </aside>
+    <div class="main-shell">
+      <header class="masthead">
+        <div><span class="eyebrow">THE COLLECTED RECORD</span><span class="archive-period">2010 — 2026</span></div>
+        <button class="button button-quiet" id="reload" type="button"><span aria-hidden="true">↻</span> Reload archive</button>
+      </header>
+      <div class="archive-line" id="archive-line">Opening the local archive…</div>
+      <main id="main-content" tabindex="-1" aria-live="polite"></main>
+      <footer class="page-footer"><span id="archive-date">Local archive</span><a href="#coverage">Understand the coverage →</a></footer>
+    </div>
+  </div>
+  <div class="toast" id="toast" role="status" hidden></div>
+</body>
+</html>

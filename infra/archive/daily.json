@@ -1,0 +1,12 @@
+{
+  "Name": "refresh",
+  "Description": "Refresh the Boise soccer archive once daily.",
+  "ScheduleExpression": "cron(0 4 * * ? *)",
+  "ScheduleExpressionTimezone": "America/Boise",
+  "FlexibleTimeWindow": {"Mode": "OFF"},
+  "ActionAfterCompletion": "NONE",
+  "Target": {
+    "Input": "{\"operation\":\"scheduled\",\"scheduled_time\":\"<aws.scheduler.scheduled-time>\"}",
+    "RetryPolicy": {"MaximumRetryAttempts": 1, "MaximumEventAgeInSeconds": 3600}
+  }
+}

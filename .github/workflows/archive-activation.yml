@@ -1,0 +1,58 @@
+name: Soccer archive activation
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Archive environment
+        type: choice
+        options: [dev, prod]
+        required: true
+      mode:
+        description: Collection mode (daily runs only in production)
+        type: choice
+        options: ['off', manual, daily]
+        required: true
+
+permissions: {}
+
+jobs:
+  activate:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    environment: archive-activation-${{ inputs.target }}
+    # A stop can run while a manual collection job is still in flight.
+    concurrency:
+      group: archive-writer-activation
+      queue: max
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      TARGET: ${{ inputs.target }}
+      MODE: ${{ inputs.mode }}
+      AWS_REGION: us-west-2
+      AWS_PAGER: ''
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check protected environment inputs and main revision
+        run: |
+          case "$TARGET/$MODE" in
+            dev/off|dev/manual|prod/off|prod/manual|prod/daily) ;;
+            *) exit 1 ;;
+          esac
+          git fetch --no-tags --depth=1 origin main
+          test "$(git rev-parse FETCH_HEAD)" = "$GITHUB_SHA"
+          account=$(sed -nE 's/^account_id[[:space:]]*=[[:space:]]*"([0-9]{12})".*/\1/p' "infra/environments/archive-$TARGET.tfvars")
+          [[ "$account" =~ ^[0-9]{12}$ ]]
+          echo "ARCHIVE_ACCOUNT=$account" >> "$GITHUB_ENV"
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          aws-region: us-west-2
+          role-to-assume: arn:aws:iam::${{ env.ARCHIVE_ACCOUNT }}:role/soccer-archive-${{ inputs.target }}-activation
+          allowed-account-ids: ${{ env.ARCHIVE_ACCOUNT }}
+      - name: Set and verify the collection mode
+        run: python3 -m scripts.boise_collect.activation --environment "$TARGET" --account "$ARCHIVE_ACCOUNT" --mode "$MODE" >> "$GITHUB_STEP_SUMMARY"

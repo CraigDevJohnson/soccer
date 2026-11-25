@@ -1,0 +1,53 @@
+headers {
+  Accept: application/json
+  Accept-Encoding: identity
+  User-Agent: Boise-History-Collector/1.0
+}
+script:pre-request {
+  const base = String(bru.getEnvVar('baseUrl'));
+  const url = new URL(base);
+  const local = url.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname);
+  if (base !== 'https://lps-api-prod.lps-test.com' && !local) throw new Error('Invalid collector origin');
+  if (url.origin !== base || url.username || url.password || url.search || url.hash) throw new Error('Invalid collector origin');
+  if (bru.interpolate(req.getUrl()) !== base + bru.getEnvVar('resourcePath')) throw new Error('Collector request mismatch');
+  const maxBody = Number(bru.getEnvVar('maxBody'));
+  const timeout = Number(bru.getEnvVar('timeoutMs'));
+  if (!Number.isInteger(maxBody) || maxBody < 1 || maxBody > 8388608) throw new Error('Invalid body limit');
+  if (!Number.isInteger(timeout) || timeout < 1) throw new Error('Invalid timeout');
+  req.setMaxRedirects(0);
+  req.setTimeout(timeout);
+  req.disableParsingResponseJson();
+  // Bruno 4.4.0 exposes the Axios request and original byte buffer in developer mode.
+  req.req.maxContentLength = maxBody;
+  req.req.decompress = false;
+  req.onFail(async error => {
+    const response = error.response || error.request?.res || error.request?._currentRequest?.res;
+    const oversized = error.code === 'ERR_BAD_RESPONSE' && String(error.message).startsWith('maxContentLength size of ');
+    const result = {
+      version: 1,
+      requestId: bru.getEnvVar('requestId'),
+      error: oversized ? 'body_too_large' : 'network_error',
+      status: response?.statusCode || response?.status || null,
+      retryAfter: response?.headers?.['retry-after'] || null
+    };
+    const bytes = Buffer.from('BOISE_BRUNO_RESULT ' + JSON.stringify(result) + '\n');
+    await new Promise((resolve, reject) => {
+      require('node:process').stdout.write(bytes, error => error ? reject(error) : resolve());
+    });
+  });
+}
+script:post-response {
+  const bytes = res.getDataBuffer();
+  if (!Buffer.isBuffer(bytes) || bytes.length > Number(bru.getEnvVar('maxBody'))) throw new Error('Invalid response buffer');
+  const result = {
+    version: 1,
+    requestId: bru.getEnvVar('requestId'),
+    status: res.getStatus(),
+    retryAfter: res.getHeader('retry-after') || null,
+    bodyBase64: bytes.toString('base64')
+  };
+  const frame = Buffer.from('BOISE_BRUNO_RESULT ' + JSON.stringify(result) + '\n');
+  await new Promise((resolve, reject) => {
+    require('node:process').stdout.write(frame, error => error ? reject(error) : resolve());
+  });
+}

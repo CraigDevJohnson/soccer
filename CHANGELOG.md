@@ -4,6 +4,12 @@ What changed in the Let's Plan Soccer backend, newest first. There are no
 releases: a merge to `main` deploys, so changes are listed under the day they
 merged. Dependency updates are left out.
 
+## 2026-11-25
+
+- Add the Boise collector, verified archive import and private AWS refresh worker. Collection and the daily schedule start disabled.
+- Fix explorer startup on SQLite builds without extension loading and include games with missing registration details in team filters.
+- Preserve queued daily refreshes and accepted observations during job recovery and retirement. Deploy routine archive changes through dev and production using the reviewed image digest.
+
 ## 2026-11-17
 
 - Let the steps that run from a computer run in a cloud thread instead, with a device-code sign-in Craig approves on his phone.

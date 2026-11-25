@@ -1,0 +1,5 @@
+bucket = "craigdevjohnson-tofu-state-793680745829"
+key    = "soccer-archive/prod/terraform.tfstate"
+region = "us-west-2"
+
+workspace_key_prefix = "soccer-archive/prod"
