@@ -4,6 +4,9 @@
 *.test
 coverage.out
 
+# Collector's pinned Bruno runtime; installed locally with collector:setup.
+/scripts/boise_collect/bruno/node_modules/
+
 # Local secrets and env
 .env
 .env.*
@@ -29,3 +32,7 @@ backend.*.hcl
 
 # OS / editors
 .DS_Store
+
+# Local Python collector bytecode (datasets/reports belong under dist/)
+__pycache__/
+*.py[cod]

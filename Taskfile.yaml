@@ -28,6 +28,33 @@ tasks:
     cmds:
       - go test ./...
 
+  collector:test:
+    desc: Test the collector and local explorer offline (run collector:setup first)
+    cmds:
+      - node --check scripts/boise_collect/web/app.js
+      - python3 -m unittest discover -s scripts/boise_collect/tests -v
+
+  collector:setup:
+    desc: Install the locked Bruno CLI locally; does not collect data
+    cmds:
+      - npm ci --prefix scripts/boise_collect/bruno --ignore-scripts --no-audit --no-fund
+
+  collector:install:
+    desc: Install a committed collector release and launcher under the user's Application Support directory
+    cmds:
+      - python3 -m scripts.boise_collect.install {{.CLI_ARGS}}
+
+  explorer:run:
+    desc: Browse the durable archive locally at http://127.0.0.1:8767
+    cmds:
+      - python3 -m scripts.boise_collect.explorer --data-dir "${LPS_DATA_DIR:-$HOME/Library/Application Support/LPS Boise Collector/data/boise-history}" {{.CLI_ARGS}}
+
+  explorer:test:
+    desc: Test read-only archive queries and HTTP boundaries
+    cmds:
+      - node --check scripts/boise_collect/web/app.js
+      - python3 -m unittest scripts.boise_collect.tests.test_explorer_data scripts.boise_collect.tests.test_explorer_http -v
+
   fmt:
     desc: Format Go code
     cmds:
@@ -56,6 +83,7 @@ tasks:
       - task: fmt:check
       - task: vet
       - task: test
+      - task: collector:test
       - task: infra:check
 
   run:

@@ -1,0 +1,215 @@
+{
+  "division_season": {
+    "UDivSeasonID": 114512,
+    "FacilityID": 4,
+    "UDivisionID": 5364,
+    "season_id": 6396,
+    "Season": 173,
+    "NumGames": 8,
+    "GameLength": 45,
+    "show_all_games": true,
+    "show_first_game": true,
+    "suppress_leaderboard": false,
+    "est_start_date": "1926-09-21T00:00:00.000Z",
+    "est_end_date": "1926-11-08T00:00:00.000Z",
+    "FirstGameDate": null,
+    "LastGameDate": null,
+    "DeadlineDate": "2026-07-11",
+    "UCrossOverDivSeasonID": 0,
+    "GirlGoalDoubleScore": false,
+    "GirlGoalDoubleStandings": false
+  },
+  "games": [
+    {
+      "UGameID": 3089592,
+      "UTeam1": 490403,
+      "UTeam2": 491285,
+      "winner_id": 491285,
+      "FacilityID": 4,
+      "SchedGameDateTime": "2026-09-24T21:25:00.000Z",
+      "schedGameEndTime": null,
+      "Field": 2,
+      "result": "3 - 9",
+      "home_team": {
+        "UTeamID": 490403,
+        "FacilityID": 4,
+        "UDivSeasonID": 114512,
+        "Season": 173,
+        "team_name": "TEAM 490403",
+        "Color": null,
+        "division_name": "Coed 3 Thurs",
+        "div_code": "C3Thurs",
+        "Dropped": false
+      },
+      "visitor_team": {
+        "UTeamID": 491285,
+        "FacilityID": 4,
+        "UDivSeasonID": 114512,
+        "Season": 173,
+        "team_name": "TEAM 491285",
+        "Color": null,
+        "division_name": "Coed 3 Thurs",
+        "div_code": "C3Thurs",
+        "Dropped": false
+      }
+    },
+    {
+      "UGameID": 3086607,
+      "UTeam1": 490033,
+      "UTeam2": 490518,
+      "winner_id": 490033,
+      "FacilityID": 4,
+      "SchedGameDateTime": "2026-09-24T21:35:00.000Z",
+      "schedGameEndTime": null,
+      "Field": 1,
+      "result": "12 - 8",
+      "home_team": {
+        "UTeamID": 490033,
+        "FacilityID": 4,
+        "UDivSeasonID": 114510,
+        "Season": 173,
+        "team_name": "TEAM 490033",
+        "Color": null,
+        "division_name": "Coed 2",
+        "div_code": "C2",
+        "Dropped": false
+      },
+      "visitor_team": {
+        "UTeamID": 490518,
+        "FacilityID": 4,
+        "UDivSeasonID": 114512,
+        "Season": 173,
+        "team_name": "TEAM 490518",
+        "Color": "Black",
+        "division_name": "Coed 3 Thurs",
+        "div_code": "C3Thurs",
+        "Dropped": false
+      }
+    },
+    {
+      "UGameID": 3086606,
+      "UTeam1": 490225,
+      "UTeam2": 490445,
+      "winner_id": 490445,
+      "FacilityID": 4,
+      "SchedGameDateTime": "2026-09-24T22:20:00.000Z",
+      "schedGameEndTime": null,
+      "Field": 1,
+      "result": "3 - 8",
+      "home_team": {
+        "UTeamID": 490225,
+        "FacilityID": 4,
+        "UDivSeasonID": 114512,
+        "Season": 173,
+        "team_name": "TEAM 490225",
+        "Color": null,
+        "division_name": "Coed 3 Thurs",
+        "div_code": "C3Thurs",
+        "Dropped": false
+      },
+      "visitor_team": {
+        "UTeamID": 490445,
+        "FacilityID": 4,
+        "UDivSeasonID": 114510,
+        "Season": 173,
+        "team_name": "TEAM 490445",
+        "Color": null,
+        "division_name": "Coed 2",
+        "div_code": "C2",
+        "Dropped": false
+      }
+    }
+  ],
+  "teams": [
+    {
+      "UTeamID": 491285,
+      "FacilityID": 4,
+      "UDivSeasonID": 114512,
+      "Season": 173,
+      "TeamName": "TEAM 491285",
+      "position": 1,
+      "gamesplayed": 3,
+      "wins": 2,
+      "losses": 1,
+      "ties": 0,
+      "goalsfor": 25,
+      "goalsagainst": 23,
+      "points": 35
+    },
+    {
+      "UTeamID": 490518,
+      "FacilityID": 4,
+      "UDivSeasonID": 114512,
+      "Season": 173,
+      "TeamName": "TEAM 490518",
+      "position": 2,
+      "gamesplayed": 3,
+      "wins": 1,
+      "losses": 2,
+      "ties": 0,
+      "goalsfor": 36,
+      "goalsagainst": 33,
+      "points": 25
+    },
+    {
+      "UTeamID": 490225,
+      "FacilityID": 4,
+      "UDivSeasonID": 114512,
+      "Season": 173,
+      "TeamName": "TEAM 490225",
+      "position": 3,
+      "gamesplayed": 3,
+      "wins": 1,
+      "losses": 2,
+      "ties": 0,
+      "goalsfor": 25,
+      "goalsagainst": 33,
+      "points": 23
+    },
+    {
+      "UTeamID": 490403,
+      "FacilityID": 4,
+      "UDivSeasonID": 114512,
+      "Season": 173,
+      "TeamName": "TEAM 490403",
+      "position": 4,
+      "gamesplayed": 3,
+      "wins": 0,
+      "losses": 3,
+      "ties": 0,
+      "goalsfor": 19,
+      "goalsagainst": 35,
+      "points": 13
+    }
+  ],
+  "division_name": "Coed 3 Thurs",
+  "win_point": 10,
+  "tie_point": 5,
+  "loss_point": 0,
+  "goal_point": 5,
+  "player_standings": [
+    {
+      "UDivSeasonID": 114512,
+      "UTeamID": 490403,
+      "UPlayerID": 1875463,
+      "goals": 10,
+      "assists": 1,
+      "points": 11,
+      "team": {
+        "UTeamID": 490403,
+        "FacilityID": 4,
+        "UDivSeasonID": 114512,
+        "Season": 173,
+        "team_name": "TEAM 490403",
+        "Color": null,
+        "division_name": "Coed 3 Thurs",
+        "div_code": "C3Thurs",
+        "Dropped": false
+      },
+      "player": {
+        "UPlayerID": 1875463,
+        "FacilityID": 4
+      }
+    }
+  ]
+}

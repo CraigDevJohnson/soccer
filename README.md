@@ -85,6 +85,10 @@ It fails as a download does, with nothing left out.
 
 One JSON line per request with the route pattern (never the path, so link tokens and searches stay out), status, timing and user agent. The route of each `POST` says which output a person chose; the user agent on `/links/{token}` says which calendar app fetched a link. A Member link's secret never reaches this backend.
 
+## Boise historical archive
+
+The [collector](docs/operations/boise-collector.md) records public Boise sporting data in SQLite with sanitized evidence and coverage reports. The [local explorer](docs/operations/boise-explorer.md) browses that archive on loopback. Run `task collector:setup` to install the pinned Bruno transport before the offline collector tests. The collector needs Python 3.11+ and Node 24+.
+
 ## Running it
 
 Needs Go (see `go.mod`) and [Task](https://taskfile.dev).
